@@ -1,0 +1,29 @@
+name: ClassQuest — Scrape Job Postings
+
+on:
+  schedule:
+    - cron: "0 13 * * *" # 7:00am CST (UTC-6)
+    - cron: "0 18 * * *" # 12:00pm CST
+    - cron: "0 23 * * *" # 5:00pm CST
+  workflow_dispatch: # allow manual trigger for testing
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: scrapers/requirements.txt
+      - name: Install dependencies
+        run: pip install -r scrapers/requirements.txt
+      - name: Install Playwright browser
+        run: playwright install --with-deps chromium
+      - name: Run scrapers
+        run: python scrapers/run_all.py
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}

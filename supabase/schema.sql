@@ -1,0 +1,90 @@
+-- ClassQuest — Supabase schema.
+-- Run this in the Supabase SQL editor (Database → SQL Editor → New query).
+-- Safe to re-run: uses IF NOT EXISTS / CREATE OR REPLACE / DROP POLICY IF EXISTS.
+
+-- ─────────────────────────────────────────────────────────────
+-- Job postings from all district scrapers
+-- ─────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS job_postings (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  district_id TEXT NOT NULL,
+  district_name TEXT NOT NULL,
+  title TEXT NOT NULL,
+  description TEXT,
+  category TEXT,
+  location TEXT,              -- school name within district
+  posting_date DATE,
+  closing_date DATE,
+  external_url TEXT NOT NULL,
+  external_id TEXT,           -- unique ID from the portal
+  raw_html TEXT,
+  is_new BOOLEAN DEFAULT TRUE,
+  scraped_at TIMESTAMPTZ DEFAULT NOW(),
+  relevance_score INTEGER,    -- 1-10, set by Claude API
+  relevance_reason TEXT,      -- Claude's explanation
+  UNIQUE (district_id, external_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_job_postings_score ON job_postings (relevance_score DESC NULLS LAST);
+CREATE INDEX IF NOT EXISTS idx_job_postings_posting_date ON job_postings (posting_date DESC NULLS LAST);
+CREATE INDEX IF NOT EXISTS idx_job_postings_district ON job_postings (district_id);
+
+-- Auto-mark postings as not-new after 24 hours.
+-- Call from a Supabase scheduled job, or from run_all.py after each scrape.
+CREATE OR REPLACE FUNCTION mark_old_postings()
+RETURNS void AS $$
+  UPDATE job_postings SET is_new = FALSE
+  WHERE scraped_at < NOW() - INTERVAL '24 hours' AND is_new = TRUE;
+$$ LANGUAGE sql;
+
+-- ─────────────────────────────────────────────────────────────
+-- User profile — one per user.
+-- NOTE: grade_level is intentionally omitted. ClassQuest is elementary-only.
+-- ─────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS user_profile (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID REFERENCES auth.users(id) UNIQUE,
+  resume_text TEXT,
+  target_subjects TEXT[],         -- e.g. ['General Elementary', 'Reading', 'STEM']
+  preferred_districts TEXT[],     -- district_id values the user prioritizes
+  ideal_role_description TEXT,    -- freeform "what I'm looking for"
+  must_haves TEXT,
+  nice_to_haves TEXT,
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- ─────────────────────────────────────────────────────────────
+-- Application tracker
+-- ─────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS application_tracker (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID REFERENCES auth.users(id),
+  job_posting_id UUID REFERENCES job_postings(id),
+  status TEXT DEFAULT 'saved',    -- 'saved','applied','interviewing','rejected','offered'
+  notes TEXT,
+  applied_at TIMESTAMPTZ,
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE (user_id, job_posting_id)
+);
+
+-- ─────────────────────────────────────────────────────────────
+-- Row Level Security
+-- ─────────────────────────────────────────────────────────────
+ALTER TABLE user_profile ENABLE ROW LEVEL SECURITY;
+ALTER TABLE application_tracker ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Users can only access their own profile" ON user_profile;
+CREATE POLICY "Users can only access their own profile"
+  ON user_profile FOR ALL
+  USING (auth.uid() = user_id)
+  WITH CHECK (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Users can only access their own tracker" ON application_tracker;
+CREATE POLICY "Users can only access their own tracker"
+  ON application_tracker FOR ALL
+  USING (auth.uid() = user_id)
+  WITH CHECK (auth.uid() = user_id);
+
+-- job_postings has NO RLS: it is shared, read-only reference data for any
+-- logged-in user. The Python scrapers write to it with the service-role key,
+-- which bypasses RLS regardless.

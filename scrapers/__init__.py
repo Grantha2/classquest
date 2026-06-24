@@ -1,0 +1,1 @@
+"""ClassQuest scraper package."""
