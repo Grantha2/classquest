@@ -1,26 +1,28 @@
 """Scraper for Chicago Public Schools (Oracle Taleo portal).
 
 CPS has NO elementary category — all teachers sit under the broad ``Teacher``
-facet (~600+ postings across K-12). So inclusion is done by the shared title
-filter (``is_relevant_title(..., from_elementary_category=False)``), which
-requires a positive elementary signal in the title.
+JOB_FIELD facet (~664 postings across K-12). Inclusion to grades 1-6 is done by
+the shared title filter (``is_relevant_title(..., from_elementary_category=False)``).
 
-Strategy:
-  1. PRIMARY: the Taleo ``searchResults.json`` REST endpoint (no login),
-     paginated by 25 via startIndex/stopIndex. Optionally narrowed by the
-     Teacher facet's ``jobField`` code if one is configured (an optimization —
-     correctness comes from the title filter, not the facet).
-  2. FALLBACK: Playwright headless render of the search page, scraping the
-     results table (#JobTableBody rows, td.jobTitle).
+PRIMARY (verified live): the Taleo ``searchjobs`` POST API.
+  * POST {search_endpoint}?lang=en&portal={portal_id}
+  * Headers: Content-Type application/json, tz GMT-05:00, with session cookies
+    (seed them with a GET to the portal first).
+  * Body scopes results to the Teacher facet via JOB_FIELD = jobfield_code.
+  * Caveat: a malformed body still returns HTTP 200 with the literal text
+    "An Error Occurred in TEE" — so validate the body is JSON, not just status.
+  * Response: top-level ``requisitionList[]``; each record has ``jobId``,
+    ``contestNo`` (e.g. "260001CQ"), and positional ``column[]`` =
+    [Title, Location, Posting Date]. Paginate via ``pageNo`` (page size 25).
+  * Dedup + detail key is ``contestNo`` (NOT the numeric jobId):
+    jobdetail.ftl?job={contestNo}.
 
-Dedup key: the Taleo requisition id (``reqId``). Detail page lives at
-``jobdetail.ftl?lang=en&job=<reqId>`` (description in
-``#requisitionDescriptionInterface``) — not fetched per-posting by default to
-keep request volume sane; can be added once CPS is validated live.
+FALLBACK: Playwright render of the search page (#JobTableBody rows).
 """
 
 from __future__ import annotations
 
+import json
 from typing import Any
 from urllib.parse import urlparse
 
@@ -30,7 +32,8 @@ from base_scraper import BaseScraper, DEFAULT_HEADERS
 from title_filter import is_relevant_title
 
 PAGE_SIZE = 25
-MAX_PAGES = 60  # safety cap (~1,500 postings)
+MAX_PAGES = 40  # safety cap (~1,000 postings)
+TEE_ERROR = "An Error Occurred in TEE"
 
 
 class CPSTaleoScraper(BaseScraper):
@@ -42,13 +45,11 @@ class CPSTaleoScraper(BaseScraper):
         )
         parsed = urlparse(self.portal_url)
         self.origin = f"{parsed.scheme}://{parsed.netloc}"
-        self.json_endpoint: str = config.get(
-            "json_endpoint",
-            f"{self.origin}/careersection/rest/jobboard/searchResults.json",
+        self.search_endpoint: str = config.get(
+            "search_endpoint",
+            f"{self.origin}/careersection/rest/jobboard/searchjobs",
         )
-        # Optional Teacher-facet narrowing. Discover once via Playwright (click
-        # the Teacher facet, capture the XHR jobField value) and set it here or
-        # in district_config as "jobfield_code". None => pull all + title-filter.
+        self.portal_id: str = config.get("portal_id", "")
         self.jobfield_code: str | None = config.get("jobfield_code")
 
     # -- filtering ------------------------------------------------------
@@ -56,95 +57,151 @@ class CPSTaleoScraper(BaseScraper):
     def _keep(self, title: str) -> bool:
         return is_relevant_title(title, self.from_elementary_category)
 
+    # -- request body ---------------------------------------------------
+
+    def _build_body(self, page_no: int) -> dict[str, Any]:
+        job_field_values = [self.jobfield_code] if self.jobfield_code else []
+        return {
+            "multilineEnabled": False,
+            "sortingSelection": {
+                "sortBySelectionParam": "3",
+                "ascendingSortingOrder": "false",
+            },
+            "fieldData": {
+                "fields": {"KEYWORD": "", "LOCATION": "", "CATEGORY": ""},
+                "valid": True,
+            },
+            "filterSelectionParam": {
+                "searchFilterSelections": [
+                    {"id": "POSTING_DATE", "selectedValues": []},
+                    {"id": "LOCATION", "selectedValues": []},
+                    {"id": "JOB_FIELD", "selectedValues": job_field_values},
+                ]
+            },
+            "advancedSearchFiltersSelectionParam": {
+                "searchFilterSelections": [
+                    {"id": "ORGANIZATION", "selectedValues": []},
+                    {"id": "LOCATION", "selectedValues": []},
+                    {"id": "JOB_FIELD", "selectedValues": []},
+                    {"id": "JOB_NUMBER", "selectedValues": []},
+                    {"id": "URGENT_JOB", "selectedValues": []},
+                    {"id": "EMPLOYEE_STATUS", "selectedValues": []},
+                    {"id": "STUDY_LEVEL", "selectedValues": []},
+                ]
+            },
+            "pageNo": page_no,
+        }
+
     # -- normalization --------------------------------------------------
 
-    def _job_url(self, req_id: str) -> str:
-        return f"{self.origin}/careersection/3/jobdetail.ftl?lang=en&job={req_id}"
+    def _job_url(self, contest_no: str) -> str:
+        return f"{self.origin}/careersection/3/jobdetail.ftl?job={contest_no}"
 
     @staticmethod
-    def _read_columns(req: dict[str, Any]) -> dict[str, str]:
-        out: dict[str, str] = {}
-        for col in req.get("column", []) or []:
-            if not isinstance(col, dict):
-                continue
-            name = (col.get("columnName") or "").upper()
-            value = col.get("noLink") or col.get("value") or ""
-            if name:
-                out[name] = value
-        return out
+    def _clean_location(value: Any) -> str | None:
+        if not value:
+            return None
+        s = str(value).strip()
+        # Location is sometimes a JSON-encoded string; pull readable text out.
+        if s[:1] in "[{":
+            try:
+                data = json.loads(s)
+                if isinstance(data, dict):
+                    s = " ".join(str(v) for v in data.values() if v)
+                elif isinstance(data, list):
+                    s = " ".join(str(v) for v in data if v)
+            except (ValueError, TypeError):
+                pass
+        return s[:120] or None
 
     def _normalize(self, req: dict[str, Any]) -> dict[str, Any] | None:
-        cols = self._read_columns(req)
-        title = (
-            cols.get("TITLE") or req.get("descriptor") or req.get("title") or ""
-        ).strip()
+        cols = req.get("column") or []
+        contest_no = str(req.get("contestNo") or "").strip()
+        job_id = str(req.get("jobId") or "").strip()
+
+        if cols and isinstance(cols[0], str):
+            # Verified positional shape: [Title, Location, Posting Date].
+            title = cols[0].strip()
+            location = self._clean_location(cols[1]) if len(cols) > 1 else None
+            posting_date = (
+                cols[2].strip() if len(cols) > 2 and isinstance(cols[2], str) else None
+            )
+        else:
+            # Dict-style fallback (older Taleo payloads).
+            flat: dict[str, str] = {}
+            for col in cols:
+                if isinstance(col, dict):
+                    name = (col.get("columnName") or "").upper()
+                    if name:
+                        flat[name] = col.get("noLink") or col.get("value") or ""
+            title = (flat.get("TITLE") or req.get("descriptor") or "").strip()
+            location = self._clean_location(flat.get("LOCATION"))
+            posting_date = flat.get("POSTINGDATE") or None
+
         if not title:
             return None
-
-        req_id = str(
-            req.get("reqId")
-            or req.get("jobId")
-            or req.get("contestNo")
-            or cols.get("REQID")
-            or ""
-        ).strip()
-        if not req_id:
+        external_id = contest_no or job_id
+        if not external_id:
             return None
-
-        location = (cols.get("LOCATION") or req.get("location") or "").strip() or None
-        category = (
-            cols.get("JOBFIELD") or cols.get("CATEGORY") or req.get("jobField") or "Teacher"
-        )
-        posting_date = cols.get("POSTINGDATE") or req.get("postingDate") or None
 
         return {
             "district_id": self.district_id,
             "district_name": self.district_name,
             "title": title,
-            "external_id": req_id,
-            "external_url": req.get("jobUrl") or self._job_url(req_id),
-            "category": category,
+            "external_id": external_id,  # contestNo is the dedup/detail key
+            "external_url": self._job_url(contest_no or job_id),
+            "category": "Teacher",
             "location": location,
             "description": None,
-            "posting_date": posting_date,
+            "posting_date": None,  # raw Taleo date format varies; leave for scorer
             "closing_date": None,
         }
 
-    # -- JSON strategy --------------------------------------------------
+    # -- searchjobs strategy -------------------------------------------
 
-    def _fetch_via_json(self) -> list[dict[str, Any]]:
-        headers = {**DEFAULT_HEADERS, "Accept": "application/json"}
+    def _fetch_via_searchjobs(self) -> list[dict[str, Any]]:
+        # Seed Taleo session cookies (the POST needs them).
+        try:
+            self._client.get(self.portal_url)
+            self.polite_sleep()
+        except Exception:  # noqa: BLE001
+            pass
+
+        url = f"{self.search_endpoint}?lang=en&portal={self.portal_id}"
+        headers = {
+            **DEFAULT_HEADERS,
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "tz": "GMT-05:00",
+        }
+
         postings: list[dict[str, Any]] = []
+        seen: set[str] = set()
 
-        for page in range(MAX_PAGES):
-            start = page * PAGE_SIZE
-            params = {
-                "lang": "en",
-                "careersection": "3",
-                "searchParams.sortBy": "POSTING_DATE",
-                "searchParams.sortOrder": "DESC",
-                "searchParams.startIndex": str(start),
-                "searchParams.stopIndex": str(start + PAGE_SIZE),
-            }
-            if self.jobfield_code:
-                params["searchParams.jobField"] = self.jobfield_code
-
-            resp = self._client.get(self.json_endpoint, params=params, headers=headers)
+        for page_no in range(1, MAX_PAGES + 1):
+            resp = self._client.post(url, json=self._build_body(page_no), headers=headers)
             resp.raise_for_status()
-            data = resp.json()
-            requisitions = (
-                data.get("requisitionList") or data.get("requisitions") or []
-            )
+            if TEE_ERROR in resp.text:
+                print("  [cps] searchjobs returned a TEE error; stopping")
+                break
+            try:
+                data = resp.json()
+            except ValueError:
+                print("  [cps] searchjobs response was not JSON; stopping")
+                break
+
+            requisitions = data.get("requisitionList") or []
             if not requisitions:
                 break
 
             for req in requisitions:
-                if isinstance(req, dict):
-                    req = req.get("requisition", req)
                 if not isinstance(req, dict):
                     continue
                 normalized = self._normalize(req)
-                if normalized and self._keep(normalized["title"]):
+                if not normalized or normalized["external_id"] in seen:
+                    continue
+                seen.add(normalized["external_id"])
+                if self._keep(normalized["title"]):
                     postings.append(normalized)
 
             self.polite_sleep()
@@ -170,8 +227,7 @@ class CPSTaleoScraper(BaseScraper):
                 page.goto(self.portal_url, wait_until="networkidle", timeout=45000)
                 page.wait_for_selector("#JobTableBody tr, a.titlelink", timeout=20000)
 
-                rows = page.query_selector_all("#JobTableBody tr")
-                for row in rows:
+                for row in page.query_selector_all("#JobTableBody tr"):
                     link = row.query_selector("td.jobTitle a, a.titlelink")
                     if not link:
                         continue
@@ -180,16 +236,16 @@ class CPSTaleoScraper(BaseScraper):
                     if not title or not href or not self._keep(title):
                         continue
                     external_url = href if href.startswith("http") else f"{self.origin}{href}"
-                    req_id = ""
+                    contest = ""
                     for part in urlparse(external_url).query.split("&"):
                         if part.startswith("job="):
-                            req_id = part.split("=", 1)[1]
+                            contest = part.split("=", 1)[1]
                     postings.append(
                         {
                             "district_id": self.district_id,
                             "district_name": self.district_name,
                             "title": title,
-                            "external_id": req_id or external_url,
+                            "external_id": contest or external_url,
                             "external_url": external_url,
                             "category": "Teacher",
                             "location": None,
@@ -207,11 +263,11 @@ class CPSTaleoScraper(BaseScraper):
 
     def fetch_all_postings(self) -> list[dict[str, Any]]:
         try:
-            postings = self._fetch_via_json()
+            postings = self._fetch_via_searchjobs()
             if postings:
                 return postings
-            print("  [cps] JSON returned no rows; trying Playwright fallback")
+            print("  [cps] searchjobs returned no rows; trying Playwright fallback")
         except (httpx.HTTPError, ValueError) as exc:
-            print(f"  [cps] JSON endpoint failed ({exc}); trying Playwright fallback")
+            print(f"  [cps] searchjobs failed ({exc}); trying Playwright fallback")
 
         return self._fetch_via_playwright()

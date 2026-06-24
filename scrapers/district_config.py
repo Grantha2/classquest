@@ -17,15 +17,17 @@
 #            a positive elementary signal in the title.
 
 DISTRICTS = [
-    # CPS: no elementary category — use the Teacher facet via the Taleo JSON API,
-    # then hard title-filter. from_elementary_category=False.
+    # CPS: no elementary category. Use the verified Taleo `searchjobs` POST API
+    # scoped to the Teacher JOB_FIELD facet (1205 -> 664), then hard title-filter
+    # for K-6 (the facet still spans all grade bands). from_elementary_category=False.
     {
         "district_id": "cps",
         "name": "Chicago Public Schools",
         "platform": "taleo",
         "portal_url": "https://cpsk12il.taleo.net/careersection/3/jobsearch.ftl?lang=en",
-        "json_endpoint": "https://cpsk12il.taleo.net/careersection/rest/jobboard/searchResults.json",
-        "target_facet": "Teacher",
+        "search_endpoint": "https://cpsk12il.taleo.net/careersection/rest/jobboard/searchjobs",
+        "portal_id": "4140430395",
+        "jobfield_code": "2740430395",  # "Teacher" category facet
         "from_elementary_category": False,
     },
 
