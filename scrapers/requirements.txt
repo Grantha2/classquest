@@ -1,7 +1,8 @@
-httpx==0.27.0
-beautifulsoup4==4.12.3
-supabase==2.4.0
-anthropic==0.25.0
-playwright==1.44.0
-python-dotenv==1.0.1
-lxml==5.2.1
+# Pinned to a resolved, mutually-compatible set (verified live on Python 3.11+).
+# NOTE: the original httpx==0.27.0 / supabase==2.4.0 pins conflict — don't use them.
+httpx==0.28.1
+beautifulsoup4==4.15.0
+supabase==2.31.0
+anthropic==0.112.0
+python-dotenv==1.2.2
+playwright==1.44.0   # only needed for the CPS Taleo fallback

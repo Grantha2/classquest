@@ -14,6 +14,7 @@ One failed district never crashes the whole run.
 from __future__ import annotations
 
 import os
+import sys
 from datetime import datetime, timezone
 from typing import Any
 
@@ -25,6 +26,8 @@ from cps_taleo_scraper import CPSTaleoScraper
 from district_config import DISTRICTS
 from scorer import score_posting
 
+# Reuse the web app's local env file, then fall back to a plain .env.
+load_dotenv(".env.local")
 load_dotenv()
 
 # Columns we write from scraped data (relevance_* is set later by the scorer).
@@ -137,11 +140,18 @@ def get_user_profile(supabase: Client) -> dict[str, Any]:
     res = supabase.table("user_profile").select("*").limit(1).execute()
     if res.data:
         return res.data[0]
-    print("[profile] no user_profile row found — scoring with empty profile")
+    print("[profile] no user_profile row found - scoring with empty profile")
     return {}
 
 
 def main() -> None:
+    # Optional CLI filter: `python scrapers/run_all.py cusd200 d203`
+    # runs only those district_ids. No args = all districts.
+    selected = set(sys.argv[1:])
+    districts = [d for d in DISTRICTS if not selected or d["district_id"] in selected]
+    if selected:
+        print(f"Filtering to {len(districts)} district(s): {', '.join(sorted(selected))}")
+
     supabase = get_supabase()
     now = datetime.now(timezone.utc).isoformat()
     profile = get_user_profile(supabase)
@@ -150,7 +160,7 @@ def main() -> None:
     total_new = 0
     errors: list[str] = []
 
-    for config in DISTRICTS:
+    for config in districts:
         district_id = config["district_id"]
         print(f"\n=== {config['name']} ({district_id}) ===")
         try:
@@ -159,9 +169,15 @@ def main() -> None:
                 postings = scraper.fetch_all_postings()
             finally:
                 scraper.close()
-            print(f"  found {len(postings)} posting(s)")
+            if not postings:
+                # Empty is a valid result (e.g. d303/d129 have nothing posted
+                # right now) — not a failure.
+                print("  0 postings (none posted right now) - ok")
+            else:
+                print(f"  found {len(postings)} posting(s)")
             new_count = upsert_postings(supabase, district_id, postings, now)
-            print(f"  inserted {new_count} new posting(s)")
+            if postings:
+                print(f"  inserted {new_count} new posting(s)")
             districts_scraped += 1
             total_new += new_count
         except Exception as exc:  # noqa: BLE001 - isolate per-district failures
@@ -179,7 +195,7 @@ def main() -> None:
         print(f"[warn] mark_old_postings failed: {exc}")
 
     print("\n========== RUN SUMMARY ==========")
-    print(f"Districts scraped : {districts_scraped}/{len(DISTRICTS)}")
+    print(f"Districts scraped : {districts_scraped}/{len(districts)}")
     print(f"New postings      : {total_new}")
     print(f"Postings scored   : {scored}")
     print(f"Scoring errors    : {score_errors}")

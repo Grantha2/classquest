@@ -28,14 +28,14 @@ export function districtName(districtId: string): string {
   return DISTRICTS.find((d) => d.district_id === districtId)?.name ?? districtId;
 }
 
-// Elementary-focused specializations for the profile tag input + dashboard filter.
+// General elementary (grades 1-6) specializations for the profile tag input +
+// dashboard filter. Special education and early childhood are intentionally out
+// of scope (see scrapers/title_filter.py).
 export const SUBJECT_OPTIONS: string[] = [
   "General Elementary",
-  "Special Education",
   "Reading Specialist",
   "STEM",
   "Bilingual/ESL",
-  "Early Childhood",
   "Math",
   "Science",
   "Social-Emotional Learning",

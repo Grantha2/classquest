@@ -1,24 +1,82 @@
 """Scraper for Frontline / Applitrack district portals.
 
-Covers 13 of the 14 districts. Only the slug (and occasionally base_url)
-changes between districts — see district_config.py.
+Covers 13 of the 14 districts. Each district carries its own exact
+``target_categories`` and a ``from_elementary_category`` flag — see
+district_config.py. Category labels differ per portal and an exact-string miss
+returns 0 silently.
 
-Strategy (per the ClassQuest spec):
-  * Fetch each target_category separately via the category-filtered URL.
-  * The ?embed=1 variant returns clean static HTML (no nav chrome).
-  * Job links contain ``AppliTrackJobId`` in the href.
-  * external_id is the ``AppliTrackJobId`` query param.
-  * Be polite: 1s between requests (handled by BaseScraper.get).
+How the portal actually works (verified live against cusd200):
+  * The public ``view.asp`` / ``default.aspx`` pages are thin JS shells.
+  * The real job list is served by ``Output.asp``, which returns JavaScript
+    that ``document.write``s the postings HTML. We fetch it directly (PRIMARY).
+  * ``Output.asp?Category=<cat>`` filters server-side to that category.
+  * Each posting is a ``<ul class='postingsList' id='p<JOBID>_'>`` whose
+    ``<table class='title'>`` holds the title and ``<p>`` tags the description.
+  * FALLBACK: if Output.asp yields 0 for a district, parse the static
+    ``default.aspx?Category=<cat>&all=1`` page (anchors carrying AppliTrackJobId).
+
+Every title is run through ``title_filter.is_relevant_title`` before it is
+returned, so non-teaching / out-of-grade postings never reach the DB or scorer.
 """
 
 from __future__ import annotations
 
+import re
 from typing import Any
-from urllib.parse import parse_qs, urljoin, urlparse
+from urllib.parse import quote_plus
 
 from bs4 import BeautifulSoup
 
 from base_scraper import BaseScraper
+from title_filter import is_relevant_title
+
+# Frontline data hosts that serve Output.asp / default.aspx (tried in order).
+FRONTLINE_HOSTS = [
+    "https://www.applitrack.com",
+    "https://www.generalasp.com",
+]
+
+_POSTING_ID_RE = re.compile(r"^p(\d+)")
+_JOBID_QS_RE = re.compile(r"AppliTrackJobId=(\d+)")
+_DATE_RE = re.compile(r"Date Posted:\s*([0-1]?\d/[0-3]?\d/\d{4})")
+_LOCATION_RE = re.compile(
+    r"Location:\s*(.+?)\s*(?:Additional Information|Show/Hide|Date Available"
+    r"|Date Posted|Position Type|Attachment|SUMMARY|Closing|Email To|Print|Apply|$)",
+    re.IGNORECASE,
+)
+# Output.asp builds postings by concatenating document.write('...') calls. A
+# single posting can span a boundary, e.g.  ...title>'); document.write('Bilingual...
+# Stitch those boundaries back together before parsing so titles aren't polluted.
+_DOCWRITE_GLUE = re.compile(
+    r"""['"]\s*\)\s*;?\s*document\.write(?:ln)?\s*\(\s*['"]"""
+)
+
+
+def _deescape(js_text: str) -> str:
+    """Stitch document.write boundaries, then decode JS string escapes (\\' \\" \\/)."""
+    stitched = _DOCWRITE_GLUE.sub("", js_text)
+    return stitched.replace("\\/", "/").replace("\\'", "'").replace('\\"', '"')
+
+
+def _date_to_iso(mmddyyyy: str) -> str | None:
+    try:
+        mo, d, y = mmddyyyy.split("/")
+        return f"{int(y):04d}-{int(mo):02d}-{int(d):02d}"
+    except (ValueError, TypeError):
+        return None
+
+
+def _extract_fields(block_text: str) -> dict[str, Any]:
+    """Pull Location / Date Posted out of a posting block's text."""
+    out: dict[str, Any] = {"location": None, "posting_date": None}
+    dm = _DATE_RE.search(block_text)
+    if dm:
+        out["posting_date"] = _date_to_iso(dm.group(1))
+    lm = _LOCATION_RE.search(block_text)
+    if lm:
+        loc = lm.group(1).strip(" -| ")
+        out["location"] = loc[:120] or None
+    return out
 
 
 class ApplitrackScraper(BaseScraper):
@@ -27,80 +85,149 @@ class ApplitrackScraper(BaseScraper):
         self.slug: str = config["slug"]
         self.base_url: str = config.get("base_url", "https://www.applitrack.com")
         self.target_categories: list[str] = config.get("target_categories", [])
+        self.from_elementary_category: bool = config.get(
+            "from_elementary_category", True
+        )
 
     # -- URL construction ----------------------------------------------
 
-    def get_postings_url(self, category: str | None = None) -> str:
-        """Category-filtered listing URL. ?embed=1 -> clean static HTML."""
+    def _hosts(self) -> list[str]:
+        hosts = [self.base_url.rstrip("/")]
+        for h in FRONTLINE_HOSTS:
+            if h not in hosts:
+                hosts.append(h)
+        return hosts
+
+    def output_url(self, host: str, category: str | None) -> str:
+        url = f"{host}/{self.slug}/OnlineApp/JobPostings/Output.asp"
         if category:
-            cat = category.replace(" ", "+")
-            return (
-                f"{self.base_url}/{self.slug}/OnlineApp/default.aspx"
-                f"?Category={cat}&embed=1"
-            )
-        # Fallback: all postings, clean embed view.
+            return f"{url}?Category={quote_plus(category)}"
+        return f"{url}?category=all"
+
+    def default_aspx_url(self, host: str, category: str) -> str:
         return (
-            f"{self.base_url}/{self.slug}/OnlineApp/JobPostings/view.asp"
-            f"?embed=1&all=1"
+            f"{host}/{self.slug}/onlineapp/default.aspx"
+            f"?Category={quote_plus(category)}&all=1"
         )
 
-    # -- listing parsing -----------------------------------------------
+    def posting_url(self, external_id: str) -> str:
+        """Public, browser-renderable URL for a single posting."""
+        return (
+            f"{self.base_url.rstrip('/')}/{self.slug}/onlineapp/jobpostings/"
+            f"view.asp?AppliTrackJobId={external_id}"
+            f"&AppliTrackLayoutMode=detail&AppliTrackViewPosting=1"
+        )
 
-    def parse_listing_page(
-        self, html: str, category: str, page_url: str
-    ) -> list[dict[str, Any]]:
-        soup = BeautifulSoup(html, "html.parser")
+    # -- fetching -------------------------------------------------------
+
+    def _fetch_output(self, category: str | None) -> str | None:
+        last_exc: Exception | None = None
+        for host in self._hosts():
+            try:
+                resp = self.get(self.output_url(host, category))
+                if "postingsList" in resp.text or "AppliTrackOutput" in resp.text:
+                    return resp.text
+            except Exception as exc:  # noqa: BLE001
+                last_exc = exc
+        if last_exc:
+            print(f"  [warn] Output.asp fetch failed {self.district_id}/{category}: {last_exc}")
+        return None
+
+    def _fetch_default_aspx(self, category: str) -> str | None:
+        for host in self._hosts():
+            try:
+                resp = self.get(self.default_aspx_url(host, category))
+                if "AppliTrackJobId" in resp.text:
+                    return resp.text
+            except Exception:  # noqa: BLE001
+                continue
+        return None
+
+    # -- parsing --------------------------------------------------------
+
+    def _keep(self, title: str) -> bool:
+        return is_relevant_title(title, self.from_elementary_category)
+
+    def parse_output(self, js_text: str, category: str) -> list[dict[str, Any]]:
+        soup = BeautifulSoup(_deescape(js_text), "html.parser")
         postings: list[dict[str, Any]] = []
 
-        for link in soup.select("a[href*='AppliTrackJobId']"):
-            href = link.get("href")
-            if not href:
+        for ul in soup.find_all("ul", class_="postingsList"):
+            m = _POSTING_ID_RE.match(ul.get("id") or "")
+            if not m:
                 continue
-            external_url = urljoin(page_url, href)
-            qs = parse_qs(urlparse(external_url).query)
-            external_id = (qs.get("AppliTrackJobId") or [None])[0]
-            title = link.get_text(strip=True)
-            if not external_id or not title:
+            external_id = m.group(1)
+
+            block_text = ul.get_text(" ", strip=True)
+            title_el = ul.select_one("table.title")
+            raw_title = (
+                title_el.get_text(" ", strip=True)
+                if title_el
+                else (ul.find("td").get_text(" ", strip=True) if ul.find("td") else "")
+            )
+            # The title cell carries a trailing "JobID: 9995" — drop it.
+            title = re.sub(r"\s*JobID:\s*\d+\s*$", "", raw_title).strip()
+            if not title or not self._keep(title):
                 continue
 
+            paras = ul.find_all("p")
+            description = " ".join(p.get_text(" ", strip=True) for p in paras).strip()
+            if not description:
+                if title_el:
+                    title_el.extract()
+                text = ul.get_text(" ", strip=True)
+                for junk in ("Email To A Friend", "Print Version", "Apply", "Tell A Friend", "Share"):
+                    text = text.replace(junk, " ")
+                description = re.sub(r"\s+", " ", text).strip() or None
+
+            fields = _extract_fields(block_text)
             postings.append(
                 {
                     "district_id": self.district_id,
                     "district_name": self.district_name,
                     "title": title,
                     "external_id": external_id,
-                    "external_url": external_url,
+                    "external_url": self.posting_url(external_id),
                     "category": category,
-                    "location": None,
-                    "description": None,
-                    "posting_date": None,
+                    "location": fields["location"],
+                    "description": description or None,
+                    "posting_date": fields["posting_date"],
                     "closing_date": None,
                 }
             )
         return postings
 
-    # -- detail parsing -------------------------------------------------
+    def parse_default_aspx(self, html: str, category: str) -> list[dict[str, Any]]:
+        """Best-effort static fallback: anchors carrying AppliTrackJobId."""
+        soup = BeautifulSoup(html, "html.parser")
+        by_id: dict[str, dict[str, Any]] = {}
 
-    def fetch_posting_detail(self, url: str) -> str:
-        """Return the job description text from an individual posting page."""
-        try:
-            resp = self.get(url)
-        except Exception as exc:  # noqa: BLE001 - log and degrade gracefully
-            print(f"  [warn] detail fetch failed {url}: {exc}")
-            return ""
-
-        soup = BeautifulSoup(resp.text, "html.parser")
-
-        node = soup.select_one("#jobPostingDescription, .jobPostingDescription")
-        if node:
-            return node.get_text(" ", strip=True)
-
-        # Fallback: the largest <div> by text length is almost always the body.
-        divs = soup.find_all("div")
-        if divs:
-            largest = max(divs, key=lambda d: len(d.get_text(strip=True)))
-            return largest.get_text(" ", strip=True)
-        return ""
+        for a in soup.select("a[href*='AppliTrackJobId']"):
+            m = _JOBID_QS_RE.search(a.get("href", ""))
+            if not m:
+                continue
+            external_id = m.group(1)
+            title = re.sub(
+                r"\s*JobID:\s*\d+\s*$", "", a.get_text(" ", strip=True)
+            ).strip()
+            if not title or not self._keep(title):
+                continue
+            by_id.setdefault(
+                external_id,
+                {
+                    "district_id": self.district_id,
+                    "district_name": self.district_name,
+                    "title": title,
+                    "external_id": external_id,
+                    "external_url": self.posting_url(external_id),
+                    "category": category,
+                    "location": None,
+                    "description": None,
+                    "posting_date": None,
+                    "closing_date": None,
+                },
+            )
+        return list(by_id.values())
 
     # -- orchestration --------------------------------------------------
 
@@ -109,23 +236,17 @@ class ApplitrackScraper(BaseScraper):
         by_id: dict[str, dict[str, Any]] = {}
 
         for category in self.target_categories:
-            url = self.get_postings_url(category)
-            try:
-                resp = self.get(url)
-            except Exception as exc:  # noqa: BLE001
-                print(
-                    f"  [warn] listing fetch failed "
-                    f"{self.district_id}/{category}: {exc}"
-                )
-                continue
+            found: list[dict[str, Any]] = []
+            js_text = self._fetch_output(category)
+            if js_text:
+                found = self.parse_output(js_text, category)
+            if not found:
+                # Output.asp had nothing for this category — try the static page.
+                html = self._fetch_default_aspx(category)
+                if html:
+                    found = self.parse_default_aspx(html, category)
 
-            for posting in self.parse_listing_page(resp.text, category, url):
+            for posting in found:
                 by_id.setdefault(posting["external_id"], posting)
-
-        # Enrich with descriptions from each detail page.
-        for posting in by_id.values():
-            posting["description"] = self.fetch_posting_detail(
-                posting["external_url"]
-            )
 
         return list(by_id.values())

@@ -13,9 +13,10 @@ MODEL = "claude-sonnet-4-6"
 MAX_TOKENS = 300
 
 SYSTEM_PROMPT = (
-    "You are a relevance scoring assistant for an elementary school teacher job seeker \n"
-    "in the Chicago area. The user is seeking elementary-level teaching positions only \n"
-    "(grades K-6). You receive a job posting and a user profile. You return only valid JSON."
+    "You are a relevance scoring assistant for a GENERAL elementary classroom teacher \n"
+    "job seeker in the Chicago area. The user is seeking general elementary classroom \n"
+    "teaching positions for grades 1-6 only. You receive a job posting and a user \n"
+    "profile. You return only valid JSON."
 )
 
 
@@ -46,10 +47,13 @@ JOB POSTING:
 - Description: {description}
 
 TASK:
-Score this elementary teaching job posting for relevance to this user on a scale of 1-10.
-10 = perfect match for an elementary educator. 1 = not relevant.
-Automatically score any non-elementary position (middle school, high school, administration,
-athletics, support staff, transportation) a 1 — even if it slipped through the category filter.
+Score this job posting for relevance to this user on a scale of 1-10.
+10 = perfect match (general elementary classroom, grades 1-6). 1 = not relevant.
+Automatically score a 1 for any position that is special education (all forms),
+kindergarten-only, PreK/early childhood, middle/junior high/high school, administration,
+athletics, or non-teaching support staff (e.g. speech pathologist, aide, custodian) —
+even if it slipped through the category filter. A grade span that includes grade 1 or
+above (e.g. "K-2") is acceptable; only kindergarten-ONLY or PreK-only should score 1.
 Return JSON only, no other text:
 {{"score": <integer 1-10>, "reason": "<1-2 sentence explanation>"}}"""
 
