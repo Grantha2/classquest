@@ -2,7 +2,14 @@
 
 > Find your classroom.
 
-A personal job aggregator + application tracker for an elementary educator job-hunting in Chicagoland. It scrapes 14 district portals 3× daily, scores each posting for relevance with Claude, and presents a ranked, filterable feed with a Kanban application tracker.
+![Next.js](https://img.shields.io/badge/Next.js-14-black?logo=next.js&logoColor=white)
+![Supabase](https://img.shields.io/badge/Supabase-Postgres-3ECF8E?logo=supabase&logoColor=white)
+![Python](https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white)
+![Claude](https://img.shields.io/badge/AI-Claude-D97757)
+![Vercel](https://img.shields.io/badge/Deploy-Vercel-000?logo=vercel&logoColor=white)
+[![Scrape](https://github.com/Grantha2/classquest/actions/workflows/scrape.yml/badge.svg)](https://github.com/Grantha2/classquest/actions/workflows/scrape.yml)
+
+A personal job aggregator + application tracker for an elementary educator job-hunting in Chicagoland. It scrapes **32 district portals** — individual districts, county ROE consortiums, and CPS — 3× daily, filters to **grades 1–6 general-classroom** teaching, scores each posting for relevance with Claude, **geocodes it onto an interactive map**, and presents a ranked feed with a "within N miles" radius filter and a Kanban application tracker. Closed positions retire automatically.
 
 ## Tech stack
 
@@ -12,6 +19,7 @@ A personal job aggregator + application tracker for an elementary educator job-h
 | Auth + DB | Supabase (PostgreSQL + Supabase Auth) |
 | Scrapers | Python 3.11 · `httpx` · `BeautifulSoup4` · `supabase-py` · Playwright (CPS fallback) |
 | AI ranking | Anthropic Claude API (`claude-sonnet-4-6`) |
+| Maps | Leaflet + OpenStreetMap (CARTO) tiles · Google Geocoding API |
 | Cron | GitHub Actions (3× daily) |
 | Deploy | Vercel |
 
