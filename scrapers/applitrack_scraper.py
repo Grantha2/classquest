@@ -38,6 +38,11 @@ FRONTLINE_HOSTS = [
 
 _POSTING_ID_RE = re.compile(r"^p(\d+)")
 _JOBID_QS_RE = re.compile(r"AppliTrackJobId=(\d+)")
+# Consortium postings carry the real member district: "...District: <Name> Additional Information..."
+_DISTRICT_FIELD_RE = re.compile(
+    r"\bDistrict:\s*(.+?)\s+(?:Additional Information|Date |Closing|Position Type|$)",
+    re.IGNORECASE,
+)
 _DATE_RE = re.compile(r"Date Posted:\s*([0-1]?\d/[0-3]?\d/\d{4})")
 _LOCATION_RE = re.compile(
     r"Location:\s*(.+?)\s*(?:Additional Information|Show/Hide|Date Available"
@@ -88,6 +93,18 @@ class ApplitrackScraper(BaseScraper):
         self.from_elementary_category: bool = config.get(
             "from_elementary_category", True
         )
+        # Consortium portals list every job type under one slug; require an
+        # explicit teaching role in the title to filter out support staff.
+        self.require_teaching_word: bool = config.get(
+            "require_teaching_keyword", False
+        )
+        # Regional ROE consortiums aggregate many member districts. We parse the
+        # real district onto each posting, and skip district numbers we already
+        # cover via individual configs (avoids duplicates).
+        self.is_consortium: bool = config.get("is_consortium", False)
+        self.skip_district_numbers: set[str] = set(
+            str(n) for n in config.get("skip_district_numbers", [])
+        )
 
     # -- URL construction ----------------------------------------------
 
@@ -111,11 +128,13 @@ class ApplitrackScraper(BaseScraper):
         )
 
     def posting_url(self, external_id: str) -> str:
-        """Public, browser-renderable URL for a single posting."""
+        """Public, browser-renderable URL for a single posting.
+
+        Minimal form only — the &AppliTrackLayoutMode=detail&AppliTrackViewPosting=1
+        suffix breaks consortium portals (they return "no openings")."""
         return (
             f"{self.base_url.rstrip('/')}/{self.slug}/onlineapp/jobpostings/"
             f"view.asp?AppliTrackJobId={external_id}"
-            f"&AppliTrackLayoutMode=detail&AppliTrackViewPosting=1"
         )
 
     # -- fetching -------------------------------------------------------
@@ -146,7 +165,9 @@ class ApplitrackScraper(BaseScraper):
     # -- parsing --------------------------------------------------------
 
     def _keep(self, title: str) -> bool:
-        return is_relevant_title(title, self.from_elementary_category)
+        return is_relevant_title(
+            title, self.from_elementary_category, self.require_teaching_word
+        )
 
     def parse_output(self, js_text: str, category: str) -> list[dict[str, Any]]:
         soup = BeautifulSoup(_deescape(js_text), "html.parser")
@@ -170,6 +191,17 @@ class ApplitrackScraper(BaseScraper):
             if not title or not self._keep(title):
                 continue
 
+            # Consortium feeds: resolve the real member district and skip any
+            # district we already cover via an individual config (dedup).
+            district_name = self.district_name
+            if self.is_consortium:
+                dm = _DISTRICT_FIELD_RE.search(block_text)
+                if dm:
+                    district_name = dm.group(1).strip()
+                    nums = re.findall(r"\d+", district_name)
+                    if nums and nums[-1] in self.skip_district_numbers:
+                        continue
+
             paras = ul.find_all("p")
             description = " ".join(p.get_text(" ", strip=True) for p in paras).strip()
             if not description:
@@ -184,7 +216,7 @@ class ApplitrackScraper(BaseScraper):
             postings.append(
                 {
                     "district_id": self.district_id,
-                    "district_name": self.district_name,
+                    "district_name": district_name,
                     "title": title,
                     "external_id": external_id,
                     "external_url": self.posting_url(external_id),
@@ -235,16 +267,20 @@ class ApplitrackScraper(BaseScraper):
         # Dedupe across categories by external_id (first category wins).
         by_id: dict[str, dict[str, Any]] = {}
 
-        for category in self.target_categories:
+        # No target_categories => fetch the all-categories view (consortiums).
+        categories = self.target_categories or [None]
+
+        for category in categories:
+            label = category or "Teaching"
             found: list[dict[str, Any]] = []
-            js_text = self._fetch_output(category)
+            js_text = self._fetch_output(category)  # None -> ?category=all
             if js_text:
-                found = self.parse_output(js_text, category)
-            if not found:
+                found = self.parse_output(js_text, label)
+            if not found and category is not None:
                 # Output.asp had nothing for this category — try the static page.
                 html = self._fetch_default_aspx(category)
                 if html:
-                    found = self.parse_default_aspx(html, category)
+                    found = self.parse_default_aspx(html, label)
 
             for posting in found:
                 by_id.setdefault(posting["external_id"], posting)

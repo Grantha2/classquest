@@ -17,7 +17,8 @@ export default async function DashboardPage() {
   const { count: newCount } = await supabase
     .from("job_postings")
     .select("*", { count: "exact", head: true })
-    .eq("is_new", true);
+    .eq("is_new", true)
+    .eq("is_active", true);
 
   const { data: latest } = await supabase
     .from("job_postings")

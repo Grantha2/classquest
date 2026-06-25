@@ -19,15 +19,36 @@ CREATE TABLE IF NOT EXISTS job_postings (
   external_id TEXT,           -- unique ID from the portal
   raw_html TEXT,
   is_new BOOLEAN DEFAULT TRUE,
+  is_active BOOLEAN DEFAULT TRUE,  -- FALSE once a posting drops out of the feed (closed)
   scraped_at TIMESTAMPTZ DEFAULT NOW(),
   relevance_score INTEGER,    -- 1-10, set by Claude API
   relevance_reason TEXT,      -- Claude's explanation
+  latitude DOUBLE PRECISION,  -- set by the geocoding pass
+  longitude DOUBLE PRECISION,
+  geocoded_address TEXT,
+  geocode_status TEXT DEFAULT 'pending',  -- 'pending' | 'ok' | 'failed'
   UNIQUE (district_id, external_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_job_postings_score ON job_postings (relevance_score DESC NULLS LAST);
 CREATE INDEX IF NOT EXISTS idx_job_postings_posting_date ON job_postings (posting_date DESC NULLS LAST);
 CREATE INDEX IF NOT EXISTS idx_job_postings_district ON job_postings (district_id);
+CREATE INDEX IF NOT EXISTS idx_job_postings_active ON job_postings (is_active);
+CREATE INDEX IF NOT EXISTS idx_job_postings_geocode_status ON job_postings (geocode_status);
+CREATE INDEX IF NOT EXISTS idx_job_postings_latlng ON job_postings (latitude, longitude);
+
+-- Shared geocode cache so a school/address is only looked up once.
+-- Service-role-only (scraper); RLS enabled with no policy denies anon/authenticated.
+CREATE TABLE IF NOT EXISTS geocode_cache (
+  query TEXT PRIMARY KEY,
+  latitude DOUBLE PRECISION,
+  longitude DOUBLE PRECISION,
+  formatted_address TEXT,
+  status TEXT NOT NULL DEFAULT 'ok',  -- 'ok' | 'failed'
+  geocoded_at TIMESTAMPTZ DEFAULT NOW()
+);
+ALTER TABLE geocode_cache ENABLE ROW LEVEL SECURITY;
+GRANT ALL ON public.geocode_cache TO service_role;
 
 -- Auto-mark postings as not-new after 24 hours.
 -- Call from a Supabase scheduled job, or from run_all.py after each scrape.
@@ -50,6 +71,9 @@ CREATE TABLE IF NOT EXISTS user_profile (
   ideal_role_description TEXT,    -- freeform "what I'm looking for"
   must_haves TEXT,
   nice_to_haves TEXT,
+  home_address TEXT,              -- ZIP or address for "within N miles" filtering
+  home_latitude DOUBLE PRECISION,
+  home_longitude DOUBLE PRECISION,
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 

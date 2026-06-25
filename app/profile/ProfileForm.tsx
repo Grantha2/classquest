@@ -26,6 +26,9 @@ export function ProfileForm({
   const [resumeText, setResumeText] = useState(
     initialProfile?.resume_text ?? "",
   );
+  const [homeAddress, setHomeAddress] = useState(
+    initialProfile?.home_address ?? "",
+  );
 
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -85,6 +88,7 @@ export function ProfileForm({
           ideal_role_description: ideal || null,
           must_haves: mustHaves || null,
           nice_to_haves: niceToHaves || null,
+          home_address: homeAddress || null,
         }),
       });
       const data = await res.json();
@@ -175,6 +179,21 @@ export function ProfileForm({
             Add
           </button>
         </div>
+      </section>
+
+      {/* Home base */}
+      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <h2 className="font-semibold text-slate-900">Home base</h2>
+        <p className="mt-1 text-sm text-slate-500">
+          A ZIP code or address. Used to filter postings “within N miles” and to
+          center the map. We geocode it on save (not stored as exact address).
+        </p>
+        <input
+          value={homeAddress}
+          onChange={(e) => setHomeAddress(e.target.value)}
+          placeholder="e.g. 60540 or 123 Main St, Naperville IL"
+          className="mt-3 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-100"
+        />
       </section>
 
       {/* Preferred districts */}

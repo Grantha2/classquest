@@ -57,6 +57,11 @@ export function JobCard({
           </span>
         )}
         <RelevanceChip score={posting.relevance_score} />
+        {posting.distance_mi != null && (
+          <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-600">
+            📍 {posting.distance_mi.toFixed(1)} mi
+          </span>
+        )}
         {status && <StatusBadge status={status} />}
       </div>
 

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { geocodeAddress } from "@/lib/geocode";
 import type { UserProfile } from "@/lib/types";
 
 export async function GET() {
@@ -40,6 +41,31 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
+  // Only re-geocode the home base when the address actually changed.
+  const { data: existing } = await supabase
+    .from("user_profile")
+    .select("home_address, home_latitude, home_longitude")
+    .eq("user_id", user.id)
+    .maybeSingle();
+
+  const newAddress = body.home_address?.trim() || null;
+  let homeLat = existing?.home_latitude ?? null;
+  let homeLng = existing?.home_longitude ?? null;
+
+  const addressChanged = newAddress !== (existing?.home_address ?? null);
+  const missingCoords = newAddress != null && (homeLat == null || homeLng == null);
+
+  if (!newAddress) {
+    homeLat = null;
+    homeLng = null;
+  } else if (addressChanged || missingCoords) {
+    // Geocode when the address changed OR we don't have coordinates yet
+    // (e.g. it was first saved before the API key was configured).
+    const geo = await geocodeAddress(`${newAddress}, Illinois`);
+    homeLat = geo?.lat ?? null;
+    homeLng = geo?.lng ?? null;
+  }
+
   const row = {
     user_id: user.id,
     resume_text: body.resume_text ?? null,
@@ -48,6 +74,9 @@ export async function POST(request: NextRequest) {
     ideal_role_description: body.ideal_role_description ?? null,
     must_haves: body.must_haves ?? null,
     nice_to_haves: body.nice_to_haves ?? null,
+    home_address: newAddress,
+    home_latitude: homeLat,
+    home_longitude: homeLng,
     updated_at: new Date().toISOString(),
   };
 

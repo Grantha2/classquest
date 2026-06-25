@@ -7,9 +7,11 @@ import { DISTRICTS, SUBJECT_OPTIONS } from "@/lib/districts";
 export function FilterBar({
   filters,
   onChange,
+  homeBaseSet = false,
 }: {
   filters: JobFilters;
   onChange: (next: Partial<JobFilters>) => void;
+  homeBaseSet?: boolean;
 }) {
   const [districtsOpen, setDistrictsOpen] = useState(false);
   const selectedDistricts = filters.district ?? [];
@@ -112,6 +114,32 @@ export function FilterBar({
           </select>
         </div>
 
+        {/* Distance radius (needs a home base on the profile) */}
+        <div>
+          <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
+            Within
+          </label>
+          <select
+            value={filters.radiusMi ?? 0}
+            onChange={(e) =>
+              onChange({ radiusMi: Number(e.target.value) || undefined })
+            }
+            className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700"
+            title={
+              homeBaseSet
+                ? undefined
+                : "Set a home base on your profile to filter by distance"
+            }
+          >
+            <option value={0}>Any distance</option>
+            <option value={5}>5 miles</option>
+            <option value={10}>10 miles</option>
+            <option value={15}>15 miles</option>
+            <option value={25}>25 miles</option>
+            <option value={50}>50 miles</option>
+          </select>
+        </div>
+
         {/* Sort */}
         <div>
           <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
@@ -126,6 +154,7 @@ export function FilterBar({
           >
             <option value="relevance">Relevance score</option>
             <option value="date">Date posted (newest)</option>
+            {homeBaseSet && <option value="distance">Distance (nearest)</option>}
           </select>
         </div>
 

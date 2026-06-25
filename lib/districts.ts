@@ -22,6 +22,27 @@ export const DISTRICTS: DistrictRef[] = [
   { district_id: "d308", name: "Oswego Unit 308" },
   { district_id: "ccsd15", name: "Palatine CCSD 15" },
   { district_id: "waukeganschools", name: "Waukegan Unit 60" },
+  // DuPage County (near Wheaton) — consortium + single-district portals
+  { district_id: "gec", name: "Glenbard Elem Consortium (D41/44/45/89)" },
+  { district_id: "swdp", name: "SW DuPage (Winfield 34 / W. Chicago 33)" },
+  { district_id: "d15", name: "Marquardt SD 15 (Glendale Heights)" },
+  { district_id: "d93", name: "CCSD 93 (Bloomingdale / Carol Stream)" },
+  { district_id: "d34", name: "Glenview SD 34" },
+  { district_id: "d25", name: "Arlington Heights SD 25" },
+  { district_id: "d62", name: "Des Plaines CCSD 62" },
+  { district_id: "d64", name: "Park Ridge-Niles CCSD 64" },
+  { district_id: "ccsd59", name: "Elk Grove Township CCSD 59" },
+  { district_id: "d57", name: "Mount Prospect SD 57" },
+  { district_id: "d68", name: "Skokie SD 68" },
+  { district_id: "d69", name: "Skokie-Morton Grove SD 69" },
+  { district_id: "d98", name: "Berwyn North SD 98" },
+  // County ROE consortiums (each aggregates many member districts; the real
+  // district shows on each posting's label)
+  { district_id: "dupage", name: "DuPage County ROE (all districts)" },
+  { district_id: "scook", name: "Suburban Cook Consortium" },
+  { district_id: "kane", name: "Kane County Consortium" },
+  { district_id: "lake", name: "Lake County Consortium" },
+  { district_id: "willcounty", name: "Will County ROE" },
 ];
 
 export function districtName(districtId: string): string {

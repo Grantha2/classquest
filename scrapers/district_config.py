@@ -151,6 +151,217 @@ DISTRICTS = [
         "from_elementary_category": True,
     },
 
+    # --- DuPage County elementary districts near Wheaton ---
+    # These are consortium / single-district Frontline portals with no clean
+    # elementary category, so we fetch ALL categories and rely on the title
+    # filter (from_elementary_category=False + require_teaching_keyword=True) to
+    # isolate grades 1-6 teaching roles. Postings span multiple member districts;
+    # the school/location identifies which one (and is geocoded for the map).
+    {
+        "district_id": "gec",
+        "name": "Glenbard Elem Consortium (Glen Ellyn 41 / Lombard 44 / Villa Park 45 / CCSD 89)",
+        "platform": "applitrack",
+        "slug": "gec",
+        "base_url": "https://www.applitrack.com",
+        "target_categories": [],
+        "from_elementary_category": False,
+        "require_teaching_keyword": True,
+    },
+    {
+        "district_id": "swdp",
+        "name": "SW DuPage Consortium (Winfield 34 / West Chicago 33)",
+        "platform": "applitrack",
+        "slug": "swdp",
+        "base_url": "https://www.applitrack.com",
+        "target_categories": [],
+        "from_elementary_category": False,
+        "require_teaching_keyword": True,
+    },
+    {
+        "district_id": "d15",
+        "name": "Marquardt SD 15 (Glendale Heights)",
+        "platform": "applitrack",
+        "slug": "d15",
+        "base_url": "https://www.applitrack.com",
+        "target_categories": [],
+        "from_elementary_category": False,
+        "require_teaching_keyword": True,
+    },
+    {
+        "district_id": "d93",
+        "name": "CCSD 93 (Bloomingdale / Carol Stream)",
+        "platform": "applitrack",
+        "slug": "d93",
+        "base_url": "https://www.applitrack.com",
+        "target_categories": [],
+        "from_elementary_category": False,
+        "require_teaching_keyword": True,
+    },
+
+    # --- North/NW Cook individual districts (not in the scook consortium) ---
+    {
+        "district_id": "d34",
+        "name": "Glenview SD 34",
+        "platform": "applitrack",
+        "slug": "d34",
+        "base_url": "https://www.applitrack.com",
+        "target_categories": [],
+        "from_elementary_category": False,
+        "require_teaching_keyword": True,
+    },
+    {
+        "district_id": "d25",
+        "name": "Arlington Heights SD 25",
+        "platform": "applitrack",
+        "slug": "d25",
+        "base_url": "https://www.applitrack.com",
+        "target_categories": [],
+        "from_elementary_category": False,
+        "require_teaching_keyword": True,
+    },
+    {
+        "district_id": "d62",
+        "name": "Des Plaines CCSD 62",
+        "platform": "applitrack",
+        "slug": "d62",
+        "base_url": "https://www.applitrack.com",
+        "target_categories": [],
+        "from_elementary_category": False,
+        "require_teaching_keyword": True,
+    },
+    {
+        "district_id": "d64",
+        "name": "Park Ridge-Niles CCSD 64",
+        "platform": "applitrack",
+        "slug": "d64",
+        "base_url": "https://www.applitrack.com",
+        "target_categories": [],
+        "from_elementary_category": False,
+        "require_teaching_keyword": True,
+    },
+    {
+        "district_id": "ccsd59",
+        "name": "Elk Grove Township CCSD 59",
+        "platform": "applitrack",
+        "slug": "ccsd59",
+        "base_url": "https://www.applitrack.com",
+        "target_categories": [],
+        "from_elementary_category": False,
+        "require_teaching_keyword": True,
+    },
+    {
+        "district_id": "d57",
+        "name": "Mount Prospect SD 57",
+        "platform": "applitrack",
+        "slug": "d57",
+        "base_url": "https://www.applitrack.com",
+        "target_categories": [],
+        "from_elementary_category": False,
+        "require_teaching_keyword": True,
+    },
+    {
+        "district_id": "d68",
+        "name": "Skokie SD 68",
+        "platform": "applitrack",
+        "slug": "d68",
+        "base_url": "https://www.applitrack.com",
+        "target_categories": [],
+        "from_elementary_category": False,
+        "require_teaching_keyword": True,
+    },
+    {
+        "district_id": "d69",
+        "name": "Skokie-Morton Grove SD 69",
+        "platform": "applitrack",
+        "slug": "d69",
+        "base_url": "https://www.applitrack.com",
+        "target_categories": [],
+        "from_elementary_category": False,
+        "require_teaching_keyword": True,
+    },
+    {
+        "district_id": "d98",
+        "name": "Berwyn North SD 98",
+        "platform": "applitrack",
+        "slug": "d98",
+        "base_url": "https://www.applitrack.com",
+        "target_categories": [],
+        "from_elementary_category": False,
+        "require_teaching_keyword": True,
+    },
+
+    # --- Regional county ROE / HR consortiums (aggregate MANY districts) ---
+    # Fetch all categories; the title filter isolates grades 1-6 teaching. Each
+    # posting's real member district is parsed from its "District:" field and
+    # used as the label. Districts we already cover via the individual configs
+    # above are skipped (skip_district_numbers, scoped per-county to avoid
+    # number collisions) so jobs aren't duplicated.
+    {
+        "district_id": "dupage",
+        "name": "DuPage County ROE",
+        "platform": "applitrack",
+        "slug": "dupage",
+        "base_url": "https://www.applitrack.com",
+        "target_categories": [],
+        "from_elementary_category": False,
+        "require_teaching_keyword": True,
+        "is_consortium": True,
+        # already covered: cusd200, d203, ip204, gec(41/44/45/89), swdp(34/33), d15, d93, d308
+        "skip_district_numbers": ["200", "203", "204", "41", "44", "45", "89", "34", "33", "15", "93", "308"],
+    },
+    {
+        "district_id": "scook",
+        "name": "Suburban Cook County Consortium",
+        "platform": "applitrack",
+        "slug": "scook",
+        "base_url": "https://www.applitrack.com",
+        "target_categories": [],
+        "from_elementary_category": False,
+        "require_teaching_keyword": True,
+        "is_consortium": True,
+        # already covered: ccsd15 (Palatine), d308 (Oswego)
+        "skip_district_numbers": ["15", "308"],
+    },
+    {
+        "district_id": "kane",
+        "name": "Kane County HR Consortium",
+        "platform": "applitrack",
+        "slug": "kane",
+        "base_url": "https://www.applitrack.com",
+        "target_categories": [],
+        "from_elementary_category": False,
+        "require_teaching_keyword": True,
+        "is_consortium": True,
+        # already covered: d303, d131, d129, u46, d300
+        "skip_district_numbers": ["303", "131", "129", "46", "300"],
+    },
+    {
+        "district_id": "lake",
+        "name": "Lake County Schools Consortium",
+        "platform": "applitrack",
+        "slug": "lake",
+        "base_url": "https://www.applitrack.com",
+        "target_categories": [],
+        "from_elementary_category": False,
+        "require_teaching_keyword": True,
+        "is_consortium": True,
+        # already covered: waukeganschools (60)
+        "skip_district_numbers": ["60"],
+    },
+    {
+        "district_id": "willcounty",
+        "name": "Will County ROE Consortium",
+        "platform": "applitrack",
+        "slug": "willcounty",
+        "base_url": "https://www.applitrack.com",
+        "target_categories": [],
+        "from_elementary_category": False,
+        "require_teaching_keyword": True,
+        "is_consortium": True,
+        # already covered: d365, lc202, d308, ip204, d203
+        "skip_district_numbers": ["365", "202", "308", "204", "203"],
+    },
+
     # Schaumburg SD54: SchoolSpring platform, NOT Frontline. Excluded from MVP —
     # needs a separate recon pass.
     # {"district_id": "sd54", "platform": "schoolspring",

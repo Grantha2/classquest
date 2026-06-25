@@ -52,19 +52,20 @@ scrapers/                Python scraper system (see below)
 
 ```bash
 npm install
-cp .env.example .env.local   # then fill in the 5 values (see below)
+cp .env.example .env.local   # then fill in the values (see below)
 npm run dev                  # http://localhost:3000
 ```
 
 ### 2. Create the Supabase project + schema
 
 1. Create a project at [supabase.com](https://supabase.com).
-2. **SQL Editor → New query →** paste the contents of [`supabase/schema.sql`](supabase/schema.sql) and run it. This creates `job_postings`, `user_profile`, `application_tracker`, the `mark_old_postings()` function, and the RLS policies.
+2. **SQL Editor → New query →** paste the contents of [`supabase/schema.sql`](supabase/schema.sql) and run it. This creates `job_postings`, `user_profile`, `application_tracker`, `geocode_cache`, the `mark_old_postings()` function, and the RLS policies.
+   - *Upgrading an existing project?* Run [`supabase/02_location.sql`](supabase/02_location.sql) to add the geocoding/home-base columns.
 3. **Project Settings → API** — copy the values into your env (next step).
 
 ### 3. Environment variables
 
-Fill `.env.local` (web app) — and set the **server** three as GitHub Actions secrets and Vercel env vars too:
+Fill `.env.local` (web app) — and set the **server** keys (`SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_MAPS_API_KEY`) as GitHub Actions secrets and Vercel env vars too:
 
 | Variable | Where it's used | Notes |
 |---|---|---|
@@ -73,6 +74,7 @@ Fill `.env.local` (web app) — and set the **server** three as GitHub Actions s
 | `SUPABASE_URL` | Python scrapers | same as project URL |
 | `SUPABASE_SERVICE_KEY` | Python scrapers | **service role** key — bypasses RLS, server-only, never expose |
 | `ANTHROPIC_API_KEY` | scorer | from [console.anthropic.com](https://console.anthropic.com) |
+| `GOOGLE_MAPS_API_KEY` | geocoding (scraper + `/api/profile`) | Google Cloud Geocoding API, billing enabled; server-only |
 
 ### 4. Create your login + profile
 

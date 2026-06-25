@@ -33,7 +33,8 @@ HARD_EXCLUDE = [
     r"\bvisually impaired\b", r"\bhearing impaired\b", r"\bhard of hearing\b",
     # "specials" / non-general-classroom subjects (scope is general elementary
     # classroom only). NOTE: the (?<!language ) guard keeps "Language Arts" / ELA.
-    r"(?<!language )\barts?\b", r"\bmusic\b",
+    r"(?<!language )\barts?\b", r"\bmusic\b", r"\bband\b", r"\borchestra\b",
+    r"\bchoir\b", r"\bchorus\b", r"\bdrama\b", r"\btheat(?:er|re)\b", r"\bdance\b",
     r"\bphysical ed", r"\bphys\.? ?ed\b", r"\bP\.?E\.?\b",
     r"\bcoordinator\b",
     # admin / non-teaching / support
@@ -41,7 +42,8 @@ HARD_EXCLUDE = [
     r"\bcoach\b", r"\bathletic", r"\bcustodian\b", r"\bmaintenance\b",
     r"\bbus\b", r"\bdriver\b", r"\btransportation\b", r"\bsecretary\b",
     r"\bclerk\b", r"\bregistrar\b", r"\baide\b", r"\bpara(professional|educator)?\b",
-    r"\bprogram assistant\b", r"\bmonitor\b", r"\bsupervisor\b", r"\bsecurity\b",
+    r"\bliaison\b", r"\bCNA\b", r"\bassistant\b",  # teaching/instructional/program assistant
+    r"\bmonitor\b", r"\bsupervisor\b", r"\bsecurity\b",
     r"\bcafeteria\b", r"\bfood service\b", r"\bnutrition\b", r"\bnurse\b",
     r"\bspeech\b", r"\bSLP\b", r"\boccupational therap", r"\bphysical therap",
     r"\bpsychologist\b", r"\bsocial worker\b", r"\bcounselor\b",
@@ -57,7 +59,10 @@ EARLY_BAND = re.compile(
 # an early-childhood/kindergarten title. Deliberately avoids bare multi-digit
 # numbers so year ranges like "2026-2027" don't register.
 GRADE_SIGNAL = [
-    r"\belementary\b", r"\bprimary\b", r"\bintermediate\b",
+    # "Elementary" as a role, but NOT a school name ("Jefferson Elementary School")
+    # — while still allowing the literal title "Elementary School Teacher".
+    r"\belementary\b(?!\s+school\b)", r"\belementary school teacher\b",
+    r"\bprimary\b", r"\bintermediate\b",
     r"\b(1st|2nd|3rd|4th|5th|6th)\b",
     r"\b(first|second|third|fourth|fifth|sixth)\s+grade\b",
     r"\bgrades?\s*[1-6]\b",
@@ -71,9 +76,14 @@ GRADE_SIGNAL = [
 # (e.g. "Bilingual Early Childhood" stays excluded).
 SUBJECT_SIGNAL = [r"\bclassroom teacher\b", r"\bbilingual\b", r"\bdual language\b"]
 
+# Words that mark an actual teaching role. Required for ALL-category portals
+# (consortiums) where non-teaching postings are mixed in.
+TEACHING_WORD = [r"\bteacher\b", r"\bteaching\b", r"\beducator\b", r"\binstructor\b"]
+
 _HARD = [re.compile(p, re.IGNORECASE) for p in HARD_EXCLUDE]
 _GRADE = [re.compile(p, re.IGNORECASE) for p in GRADE_SIGNAL]
 _SUBJECT = [re.compile(p, re.IGNORECASE) for p in SUBJECT_SIGNAL]
+_TEACH = [re.compile(p, re.IGNORECASE) for p in TEACHING_WORD]
 
 
 def _has_grade_signal(text: str) -> bool:
@@ -84,8 +94,21 @@ def _has_keep_signal(text: str) -> bool:
     return _has_grade_signal(text) or any(p.search(text) for p in _SUBJECT)
 
 
-def is_relevant_title(title: str, from_elementary_category: bool) -> bool:
-    """True if the posting should be kept (scraped, stored, scored)."""
+def _has_teaching_word(text: str) -> bool:
+    return any(p.search(text) for p in _TEACH)
+
+
+def is_relevant_title(
+    title: str,
+    from_elementary_category: bool,
+    require_teaching_word: bool = False,
+) -> bool:
+    """True if the posting should be kept (scraped, stored, scored).
+
+    require_teaching_word: set for ALL-category portals (e.g. district
+    consortiums) where non-teaching roles are mixed in and the title must
+    explicitly name a teaching role.
+    """
     t = title or ""
 
     # 1. Hard non-elementary roles — always out.
@@ -98,8 +121,14 @@ def is_relevant_title(title: str, from_elementary_category: bool) -> bool:
     if EARLY_BAND.search(t) and not _has_grade_signal(t):
         return False
 
-    # 3. A named elementary category already guarantees the band; grade-less
-    #    facets (CPS, Palatine) must show a positive (grade or subject) signal.
+    # 3. A named elementary category already guarantees the band.
     if from_elementary_category:
         return True
-    return _has_keep_signal(t)
+
+    # 4. Grade-less facets (CPS, Palatine, consortiums) need a positive signal.
+    if not _has_keep_signal(t):
+        return False
+    # 5. All-category portals additionally require an explicit teaching role.
+    if require_teaching_word and not _has_teaching_word(t):
+        return False
+    return True

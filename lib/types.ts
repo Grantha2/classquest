@@ -32,6 +32,11 @@ export interface JobPosting {
   scraped_at: string; // ISO timestamp
   relevance_score: number | null; // 1-10
   relevance_reason: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  geocoded_address: string | null;
+  // Computed by /api/jobs when a home-base radius filter is active.
+  distance_mi?: number | null;
 }
 
 export interface UserProfile {
@@ -43,6 +48,9 @@ export interface UserProfile {
   ideal_role_description: string | null;
   must_haves: string | null;
   nice_to_haves: string | null;
+  home_address: string | null;
+  home_latitude: number | null;
+  home_longitude: number | null;
   updated_at?: string;
 }
 
@@ -65,7 +73,8 @@ export interface JobFilters {
   minScore?: number;
   isNew?: boolean;
   dateRange?: "all" | "7d" | "30d";
-  sortBy?: "relevance" | "date";
+  sortBy?: "relevance" | "date" | "distance";
+  radiusMi?: number; // within N miles of the user's home base
   page?: number;
 }
 
