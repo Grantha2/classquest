@@ -19,8 +19,9 @@ jobs:
           cache-dependency-path: scrapers/requirements.txt
       - name: Install dependencies
         run: pip install -r scrapers/requirements.txt
-      - name: Install Playwright browser
-        run: playwright install --with-deps chromium
+      # No Playwright browser install: CPS uses the verified JSON searchjobs API,
+      # and the scraper degrades gracefully if the Playwright fallback is absent.
+      # (Avoids the Ubuntu 24.04 `libasound2` --with-deps failure.)
       - name: Run scrapers
         run: python scrapers/run_all.py
         env:
