@@ -46,7 +46,7 @@ export async function POST(request: NextRequest) {
   const { data: existing } = await supabase
     .from("user_profile")
     .select(
-      "home_address, home_latitude, home_longitude, target_subjects, ideal_role_description, must_haves, nice_to_haves, resume_text",
+      "home_address, home_latitude, home_longitude, target_subjects, preferred_districts, ideal_role_description, must_haves, nice_to_haves, resume_text",
     )
     .eq("user_id", user.id)
     .maybeSingle();
@@ -98,6 +98,8 @@ export async function POST(request: NextRequest) {
   const scoringChanged =
     JSON.stringify(existing?.target_subjects ?? null) !==
       JSON.stringify(row.target_subjects) ||
+    JSON.stringify(existing?.preferred_districts ?? null) !==
+      JSON.stringify(row.preferred_districts) ||
     (existing?.ideal_role_description ?? null) !== row.ideal_role_description ||
     (existing?.must_haves ?? null) !== row.must_haves ||
     (existing?.nice_to_haves ?? null) !== row.nice_to_haves ||

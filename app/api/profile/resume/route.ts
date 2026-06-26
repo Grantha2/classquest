@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { triggerScrapeWorkflow } from "@/lib/github";
 // Import the implementation directly to avoid pdf-parse's debug-mode
 // "read a sample PDF on import" behavior that breaks in serverless builds.
 import pdfParse from "pdf-parse/lib/pdf-parse.js";
@@ -52,6 +53,12 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  const { data: existing } = await supabase
+    .from("user_profile")
+    .select("resume_text")
+    .eq("user_id", user.id)
+    .maybeSingle();
+
   // Persist the extracted text (never the raw binary).
   const { error } = await supabase
     .from("user_profile")
@@ -62,6 +69,10 @@ export async function POST(request: NextRequest) {
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+
+  if ((existing?.resume_text ?? null) !== text) {
+    await triggerScrapeWorkflow();
   }
 
   return NextResponse.json({ resume_text: text });
