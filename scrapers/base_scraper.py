@@ -14,6 +14,10 @@ USER_AGENT = "ClassQuest/1.0 (personal-use educator job aggregator)"
 # Be a polite scraper — minimum delay between requests to the same portal.
 REQUEST_DELAY_SECONDS = 1.0
 
+# A 32-portal sweep is prone to transient timeouts; retry those a couple times.
+REQUEST_TIMEOUT = 30.0
+MAX_RETRIES = 2  # in addition to the initial attempt
+
 DEFAULT_HEADERS = {
     "User-Agent": USER_AGENT,
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -28,18 +32,36 @@ class BaseScraper(ABC):
         self.config = config
         self.district_id: str = config["district_id"]
         self.district_name: str = config["name"]
+        # Set True once any feed responds this run; lets run_all tell a genuinely
+        # empty portal apart from an unreachable one (so we never silently miss it).
+        self.reachable: bool = False
         self._client = httpx.Client(
             headers=DEFAULT_HEADERS,
-            timeout=20.0,
+            timeout=REQUEST_TIMEOUT,
             follow_redirects=True,
         )
 
     # -- shared helpers -------------------------------------------------
 
+    def request(self, method: str, url: str, **kwargs: Any) -> httpx.Response:
+        """HTTP request with retries on transient timeouts/transport errors.
+        4xx/5xx (raise_for_status) are NOT retried — a 404 is a permanent miss."""
+        last_exc: Exception | None = None
+        for attempt in range(MAX_RETRIES + 1):
+            try:
+                response = self._client.request(method, url, **kwargs)
+                response.raise_for_status()
+                return response
+            except (httpx.TimeoutException, httpx.TransportError) as exc:
+                last_exc = exc
+                if attempt < MAX_RETRIES:
+                    time.sleep(1.0 * (attempt + 1))
+        assert last_exc is not None
+        raise last_exc
+
     def get(self, url: str) -> httpx.Response:
-        """GET with the shared client, then sleep to stay polite."""
-        response = self._client.get(url)
-        response.raise_for_status()
+        """GET with retries, then sleep to stay polite."""
+        response = self.request("GET", url)
         self.polite_sleep()
         return response
 

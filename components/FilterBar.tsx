@@ -14,12 +14,20 @@ export function FilterBar({
   homeBaseSet?: boolean;
 }) {
   const [districtsOpen, setDistrictsOpen] = useState(false);
+  const [gradesOpen, setGradesOpen] = useState(false);
   const selectedDistricts = filters.district ?? [];
+  const selectedGrades = filters.grades ?? [];
 
   function toggleDistrict(id: string) {
     const set = new Set(selectedDistricts);
     set.has(id) ? set.delete(id) : set.add(id);
     onChange({ district: Array.from(set) });
+  }
+
+  function toggleGrade(g: number) {
+    const set = new Set(selectedGrades);
+    set.has(g) ? set.delete(g) : set.add(g);
+    onChange({ grades: Array.from(set).sort((a, b) => a - b) });
   }
 
   return (
@@ -54,6 +62,41 @@ export function FilterBar({
                     className="accent-sky-600"
                   />
                   {d.name}
+                </label>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Grade level */}
+        <div className="relative">
+          <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
+            Grade
+          </label>
+          <button
+            type="button"
+            onClick={() => setGradesOpen((o) => !o)}
+            className="min-w-[120px] rounded-lg border border-slate-300 px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50"
+          >
+            {selectedGrades.length === 0
+              ? "All grades"
+              : selectedGrades.map((g) => `${g}`).join(", ")}
+            <span className="float-right text-slate-400">▾</span>
+          </button>
+          {gradesOpen && (
+            <div className="absolute z-10 mt-1 w-40 rounded-lg border border-slate-200 bg-white p-2 shadow-lg">
+              {[1, 2, 3, 4, 5, 6].map((g) => (
+                <label
+                  key={g}
+                  className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-slate-50"
+                >
+                  <input
+                    type="checkbox"
+                    checked={selectedGrades.includes(g)}
+                    onChange={() => toggleGrade(g)}
+                    className="accent-sky-600"
+                  />
+                  Grade {g}
                 </label>
               ))}
             </div>

@@ -20,9 +20,11 @@ CREATE TABLE IF NOT EXISTS job_postings (
   raw_html TEXT,
   is_new BOOLEAN DEFAULT TRUE,
   is_active BOOLEAN DEFAULT TRUE,  -- FALSE once a posting drops out of the feed (closed)
+  first_seen_at TIMESTAMPTZ DEFAULT NOW(),  -- immutable; basis for "new" (scraped_at is refreshed each run)
   scraped_at TIMESTAMPTZ DEFAULT NOW(),
   relevance_score INTEGER,    -- 1-10, set by Claude API
   relevance_reason TEXT,      -- Claude's explanation
+  grade_levels SMALLINT[],    -- grades 1-6 named in the title (for the grade filter)
   latitude DOUBLE PRECISION,  -- set by the geocoding pass
   longitude DOUBLE PRECISION,
   geocoded_address TEXT,
@@ -34,6 +36,8 @@ CREATE INDEX IF NOT EXISTS idx_job_postings_score ON job_postings (relevance_sco
 CREATE INDEX IF NOT EXISTS idx_job_postings_posting_date ON job_postings (posting_date DESC NULLS LAST);
 CREATE INDEX IF NOT EXISTS idx_job_postings_district ON job_postings (district_id);
 CREATE INDEX IF NOT EXISTS idx_job_postings_active ON job_postings (is_active);
+CREATE INDEX IF NOT EXISTS idx_job_postings_first_seen ON job_postings (first_seen_at DESC);
+CREATE INDEX IF NOT EXISTS idx_job_postings_grades ON job_postings USING GIN (grade_levels);
 CREATE INDEX IF NOT EXISTS idx_job_postings_geocode_status ON job_postings (geocode_status);
 CREATE INDEX IF NOT EXISTS idx_job_postings_latlng ON job_postings (latitude, longitude);
 
@@ -55,7 +59,7 @@ GRANT ALL ON public.geocode_cache TO service_role;
 CREATE OR REPLACE FUNCTION mark_old_postings()
 RETURNS void AS $$
   UPDATE job_postings SET is_new = FALSE
-  WHERE scraped_at < NOW() - INTERVAL '24 hours' AND is_new = TRUE;
+  WHERE first_seen_at < NOW() - INTERVAL '24 hours' AND is_new = TRUE;
 $$ LANGUAGE sql;
 
 -- ─────────────────────────────────────────────────────────────

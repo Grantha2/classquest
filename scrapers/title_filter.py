@@ -42,7 +42,8 @@ HARD_EXCLUDE = [
     r"\bcoach\b", r"\bathletic", r"\bcustodian\b", r"\bmaintenance\b",
     r"\bbus\b", r"\bdriver\b", r"\btransportation\b", r"\bsecretary\b",
     r"\bclerk\b", r"\bregistrar\b", r"\baide\b", r"\bpara(professional|educator)?\b",
-    r"\bliaison\b", r"\bCNA\b", r"\bassistant\b",  # teaching/instructional/program assistant
+    r"\bliaison\b", r"\bCNA\b",
+    r"\bassistant\b(?!\s+teacher)",  # teaching/program/instructional assistant — but keep "Assistant Teacher"
     r"\bmonitor\b", r"\bsupervisor\b", r"\bsecurity\b",
     r"\bcafeteria\b", r"\bfood service\b", r"\bnutrition\b", r"\bnurse\b",
     r"\bspeech\b", r"\bSLP\b", r"\boccupational therap", r"\bphysical therap",
@@ -76,6 +77,16 @@ GRADE_SIGNAL = [
 # (e.g. "Bilingual Early Childhood" stays excluded).
 SUBJECT_SIGNAL = [r"\bclassroom teacher\b", r"\bbilingual\b", r"\bdual language\b"]
 
+# ADJACENT signal: instructional specialist/support-teaching roles the user
+# wants surfaced (Reading Specialist is in her profile). They count as BOTH a
+# keep signal AND a teaching-role indicator, so they survive the consortium/CPS
+# path even without a grade number or the literal word "teacher".
+ADJACENT_SIGNAL = [
+    r"\breading specialist\b", r"\bliteracy\b", r"\binterventionist\b",
+    r"\bMTSS\b", r"\bRtI\b",
+    r"\b(?:ell|esl|el)\s+(?:specialist|teacher|resource|interventionist)\b",
+]
+
 # Words that mark an actual teaching role. Required for ALL-category portals
 # (consortiums) where non-teaching postings are mixed in.
 TEACHING_WORD = [r"\bteacher\b", r"\bteaching\b", r"\beducator\b", r"\binstructor\b"]
@@ -83,6 +94,7 @@ TEACHING_WORD = [r"\bteacher\b", r"\bteaching\b", r"\beducator\b", r"\binstructo
 _HARD = [re.compile(p, re.IGNORECASE) for p in HARD_EXCLUDE]
 _GRADE = [re.compile(p, re.IGNORECASE) for p in GRADE_SIGNAL]
 _SUBJECT = [re.compile(p, re.IGNORECASE) for p in SUBJECT_SIGNAL]
+_ADJ = [re.compile(p, re.IGNORECASE) for p in ADJACENT_SIGNAL]
 _TEACH = [re.compile(p, re.IGNORECASE) for p in TEACHING_WORD]
 
 
@@ -91,11 +103,50 @@ def _has_grade_signal(text: str) -> bool:
 
 
 def _has_keep_signal(text: str) -> bool:
-    return _has_grade_signal(text) or any(p.search(text) for p in _SUBJECT)
+    return (
+        _has_grade_signal(text)
+        or any(p.search(text) for p in _SUBJECT)
+        or any(p.search(text) for p in _ADJ)
+    )
 
 
 def _has_teaching_word(text: str) -> bool:
-    return any(p.search(text) for p in _TEACH)
+    # Adjacent specialist roles (Reading Specialist, Interventionist) ARE
+    # teaching roles, so they satisfy the teaching-word requirement.
+    return any(p.search(text) for p in _TEACH) or any(p.search(text) for p in _ADJ)
+
+
+def classify_title(
+    title: str,
+    from_elementary_category: bool,
+    require_teaching_word: bool = False,
+) -> tuple[bool, str]:
+    """Return (keep, reason). `reason` is the matched exclude rule or a short
+    code — used by audit.py for a drop-by-reason report. The hot path uses the
+    thin `is_relevant_title` wrapper below."""
+    t = title or ""
+
+    # 1. Hard non-elementary roles — always out.
+    for src, rx in zip(HARD_EXCLUDE, _HARD):
+        if rx.search(t):
+            return (False, f"excluded:{src}")
+
+    # 2. Early-childhood band: keep ONLY if a real grade span reaches grades 1-6
+    #    (e.g. "K-2", "PreK-3"). A subject keyword alone does not rescue it.
+    if EARLY_BAND.search(t) and not _has_grade_signal(t):
+        return (False, "early-childhood-only")
+
+    # 3. A named elementary category already guarantees the band.
+    if from_elementary_category:
+        return (True, "kept")
+
+    # 4. Grade-less facets (CPS, Palatine, consortiums) need a positive signal.
+    if not _has_keep_signal(t):
+        return (False, "no-elementary-signal")
+    # 5. All-category portals additionally require an explicit teaching role.
+    if require_teaching_word and not _has_teaching_word(t):
+        return (False, "no-teaching-word")
+    return (True, "kept")
 
 
 def is_relevant_title(
@@ -109,26 +160,28 @@ def is_relevant_title(
     consortiums) where non-teaching roles are mixed in and the title must
     explicitly name a teaching role.
     """
+    return classify_title(title, from_elementary_category, require_teaching_word)[0]
+
+
+_RANGE_RE = re.compile(r"\b(pre-?k|k|[1-8])\s*-\s*([1-8])\b", re.IGNORECASE)
+_ORDINAL_RE = re.compile(r"\b([1-6])(?:st|nd|rd|th)\b", re.IGNORECASE)
+_GRADE_N_RE = re.compile(r"\bgrades?\s*([1-6])\b", re.IGNORECASE)
+
+
+def extract_grades(title: str) -> list[int]:
+    """Grade levels (1-6) named in a title, for the grade-level filter.
+    "2nd Grade"->[2], "4th - 5th"->[4,5], "K-2"->[1,2], "K-8"->[1..6],
+    "PreK-3"->[1,2,3]. Empty when no grade is stated."""
     t = title or ""
-
-    # 1. Hard non-elementary roles — always out.
-    for p in _HARD:
-        if p.search(t):
-            return False
-
-    # 2. Early-childhood band: keep ONLY if a real grade span reaches grades 1-6
-    #    (e.g. "K-2", "PreK-3"). A subject keyword alone does not rescue it.
-    if EARLY_BAND.search(t) and not _has_grade_signal(t):
-        return False
-
-    # 3. A named elementary category already guarantees the band.
-    if from_elementary_category:
-        return True
-
-    # 4. Grade-less facets (CPS, Palatine, consortiums) need a positive signal.
-    if not _has_keep_signal(t):
-        return False
-    # 5. All-category portals additionally require an explicit teaching role.
-    if require_teaching_word and not _has_teaching_word(t):
-        return False
-    return True
+    grades: set[int] = set()
+    for m in _RANGE_RE.finditer(t):
+        lo_raw = m.group(1).lower()
+        lo = 1 if lo_raw in ("k", "prek", "pre-k") else int(lo_raw)
+        for g in range(lo, int(m.group(2)) + 1):
+            if 1 <= g <= 6:
+                grades.add(g)
+    for m in _ORDINAL_RE.finditer(t):
+        grades.add(int(m.group(1)))
+    for m in _GRADE_N_RE.finditer(t):
+        grades.add(int(m.group(1)))
+    return sorted(grades)

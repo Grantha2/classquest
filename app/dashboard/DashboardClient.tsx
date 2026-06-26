@@ -30,6 +30,7 @@ function buildQuery(
 ): string {
   const p = new URLSearchParams();
   (filters.district ?? []).forEach((d) => p.append("district", d));
+  (filters.grades ?? []).forEach((g) => p.append("grade", String(g)));
   if (filters.subject) p.set("subject", filters.subject);
   if (filters.minScore && filters.minScore > 1)
     p.set("minScore", String(filters.minScore));

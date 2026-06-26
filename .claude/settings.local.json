@@ -1,7 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "Bash(py -m py_compile scrapers/base_scraper.py scrapers/applitrack_scraper.py scrapers/cps_taleo_scraper.py scrapers/scorer.py scrapers/run_all.py scrapers/district_config.py)"
+      "Bash(py -m py_compile scrapers/base_scraper.py scrapers/applitrack_scraper.py scrapers/cps_taleo_scraper.py scrapers/scorer.py scrapers/run_all.py scrapers/district_config.py)",
+      "Bash(scrapers/.venv/Scripts/python.exe -m pip install --quiet pytest)",
+      "Bash(PYTHONUTF8=1 scrapers/.venv/Scripts/python.exe -m pytest scrapers/ -q)"
     ]
   }
 }

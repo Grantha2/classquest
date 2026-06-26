@@ -28,6 +28,7 @@ from cps_taleo_scraper import CPSTaleoScraper
 from district_config import DISTRICTS
 from geocode import geocode
 from scorer import score_posting
+from title_filter import extract_grades
 
 # Reuse the web app's local env file, then fall back to a plain .env.
 load_dotenv(".env.local")
@@ -111,7 +112,11 @@ def upsert_postings(
     if new_rows:
         payload = [
             {col: row.get(col) for col in INSERT_COLUMNS}
-            | {"is_new": True, "is_active": True}
+            | {
+                "is_new": True,
+                "is_active": True,
+                "grade_levels": extract_grades(row.get("title", "")),
+            }
             for row in new_rows
         ]
         supabase.table("job_postings").insert(payload).execute()
@@ -295,13 +300,86 @@ def geocode_postings(supabase: Client) -> tuple[int, int]:
     return (ok, failed)
 
 
+def backfill_grades(supabase: Client) -> int:
+    """Set grade_levels on existing rows that don't have it yet (one-time per row)."""
+    rows = (
+        supabase.table("job_postings")
+        .select("id, title")
+        .is_("grade_levels", "null")
+        .limit(2000)
+        .execute()
+    ).data or []
+    for r in rows:
+        supabase.table("job_postings").update(
+            {"grade_levels": extract_grades(r.get("title", ""))}
+        ).eq("id", r["id"]).execute()
+    return len(rows)
+
+
+def _profile_richness(p: dict[str, Any]) -> int:
+    """How many scoring-relevant fields a profile actually has filled in."""
+    score = 0
+    for f in ("resume_text", "ideal_role_description", "must_haves", "nice_to_haves"):
+        if (p.get(f) or "").strip():
+            score += 1
+    if p.get("target_subjects"):
+        score += 1
+    if p.get("preferred_districts"):
+        score += 1
+    return score
+
+
+def _profile_for_email(supabase: Client, email: str) -> dict[str, Any] | None:
+    """Resolve the profile belonging to a specific auth user (by email)."""
+    try:
+        resp = supabase.auth.admin.list_users()
+        users = resp if isinstance(resp, list) else getattr(resp, "users", []) or []
+        match = next(
+            (u for u in users if (getattr(u, "email", "") or "").lower() == email.lower()),
+            None,
+        )
+        if not match:
+            return None
+        rows = (
+            supabase.table("user_profile")
+            .select("*")
+            .eq("user_id", match.id)
+            .limit(1)
+            .execute()
+        ).data
+        return rows[0] if rows else None
+    except Exception as exc:  # noqa: BLE001
+        print(f"[profile] email lookup failed ({exc}); falling back")
+        return None
+
+
 def get_user_profile(supabase: Client) -> dict[str, Any]:
-    """ClassQuest is a single-user app; use the first profile row if present."""
-    res = supabase.table("user_profile").select("*").limit(1).execute()
-    if res.data:
-        return res.data[0]
-    print("[profile] no user_profile row found - scoring with empty profile")
-    return {}
+    """Score against THE user's preferences. If CLASSQUEST_USER_EMAIL is set,
+    target that user's profile explicitly; otherwise fall back to the most
+    complete profile (never a blank stray row)."""
+    email = os.environ.get("CLASSQUEST_USER_EMAIL")
+    if email:
+        profile = _profile_for_email(supabase, email)
+        if profile and _profile_richness(profile) > 0:
+            print(f"[profile] scoring against {email}")
+            return profile
+        print(f"[profile] no usable profile for {email}; using most-complete")
+
+    rows = (
+        supabase.table("user_profile")
+        .select("*")
+        .order("updated_at", desc=True)
+        .execute()
+    ).data or []
+    if not rows:
+        print("[profile] no user_profile row found - scoring with empty profile")
+        return {}
+    best = max(rows, key=lambda p: (_profile_richness(p), p.get("updated_at") or ""))
+    if _profile_richness(best) == 0:
+        print("[profile] only empty profile(s) found - scoring will be generic")
+    else:
+        print(f"[profile] scoring against profile updated {best.get('updated_at')}")
+    return best
 
 
 def main() -> None:
@@ -319,6 +397,7 @@ def main() -> None:
     districts_scraped = 0
     total_new = 0
     errors: list[str] = []
+    unreachable: list[str] = []
 
     for config in districts:
         district_id = config["district_id"]
@@ -327,14 +406,21 @@ def main() -> None:
             scraper = make_scraper(config)
             try:
                 postings = scraper.fetch_all_postings()
+                reachable = scraper.reachable
             finally:
                 scraper.close()
             if not postings:
-                # Empty is a valid result (e.g. d303/d129 have nothing posted
-                # right now) — not a failure.
-                print("  0 postings (none posted right now) - ok")
+                if reachable:
+                    # Genuinely empty (e.g. d303/d129 have nothing posted now).
+                    print("  0 postings (none posted right now) - ok")
+                else:
+                    # Portal never responded — do NOT treat as empty (would look
+                    # like a quiet district and silently drop coverage).
+                    print("  [UNREACHABLE] portal did not respond; left as-is")
+                    unreachable.append(district_id)
             else:
                 print(f"  found {len(postings)} posting(s)")
+            # Empty + unreachable => upsert is a no-op and (by its guard) won't retire.
             new_count = upsert_postings(supabase, district_id, postings, now)
             if postings:
                 print(f"  inserted {new_count} new posting(s)")
@@ -344,6 +430,9 @@ def main() -> None:
             msg = f"{district_id}: {exc}"
             errors.append(msg)
             print(f"  [ERROR] {msg}")
+
+    print("\n=== Backfilling grade levels ===")
+    print(f"  grade_levels set on {backfill_grades(supabase)} row(s)")
 
     print("\n=== Geocoding new postings ===")
     geocoded, geocode_failed = geocode_postings(supabase)
@@ -359,6 +448,7 @@ def main() -> None:
 
     print("\n========== RUN SUMMARY ==========")
     print(f"Districts scraped : {districts_scraped}/{len(districts)}")
+    print(f"Unreachable       : {len(unreachable)}" + (f" ({', '.join(unreachable)})" if unreachable else ""))
     print(f"New postings      : {total_new}")
     print(f"Geocoded          : {geocoded} (failed {geocode_failed})")
     print(f"Postings scored   : {scored}")

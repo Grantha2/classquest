@@ -179,8 +179,7 @@ class CPSTaleoScraper(BaseScraper):
         seen: set[str] = set()
 
         for page_no in range(1, MAX_PAGES + 1):
-            resp = self._client.post(url, json=self._build_body(page_no), headers=headers)
-            resp.raise_for_status()
+            resp = self.request("POST", url, json=self._build_body(page_no), headers=headers)
             if TEE_ERROR in resp.text:
                 print("  [cps] searchjobs returned a TEE error; stopping")
                 break
@@ -189,6 +188,7 @@ class CPSTaleoScraper(BaseScraper):
             except ValueError:
                 print("  [cps] searchjobs response was not JSON; stopping")
                 break
+            self.reachable = True  # endpoint responded with valid JSON
 
             requisitions = data.get("requisitionList") or []
             if not requisitions:
@@ -225,6 +225,7 @@ class CPSTaleoScraper(BaseScraper):
                 browser = p.chromium.launch(headless=True)
                 page = browser.new_page(user_agent=DEFAULT_HEADERS["User-Agent"])
                 page.goto(self.portal_url, wait_until="networkidle", timeout=45000)
+                self.reachable = True
                 page.wait_for_selector("#JobTableBody tr, a.titlelink", timeout=20000)
 
                 for row in page.query_selector_all("#JobTableBody tr"):
