@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS job_postings (
   scraped_at TIMESTAMPTZ DEFAULT NOW(),
   relevance_score INTEGER,    -- 1-10, set by Claude API
   relevance_reason TEXT,      -- Claude's explanation
+  scored_at TIMESTAMPTZ,      -- when scored; re-scored when the profile is updated after this
   grade_levels SMALLINT[],    -- grades 1-6 named in the title (for the grade filter)
   latitude DOUBLE PRECISION,  -- set by the geocoding pass
   longitude DOUBLE PRECISION,
@@ -53,6 +54,24 @@ CREATE TABLE IF NOT EXISTS geocode_cache (
 );
 ALTER TABLE geocode_cache ENABLE ROW LEVEL SECURITY;
 GRANT ALL ON public.geocode_cache TO service_role;
+
+-- Per-scrape run record (scrape-driven freshness for the dashboard header).
+CREATE TABLE IF NOT EXISTS scrape_runs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  run_at TIMESTAMPTZ DEFAULT NOW(),
+  districts_scraped INTEGER,
+  new_postings INTEGER,
+  geocoded INTEGER,
+  scored INTEGER,
+  unreachable INTEGER,
+  active_total INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_scrape_runs_run_at ON scrape_runs (run_at DESC);
+GRANT SELECT ON public.scrape_runs TO anon, authenticated;
+GRANT ALL ON public.scrape_runs TO service_role;
+ALTER TABLE scrape_runs ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "read scrape_runs" ON scrape_runs;
+CREATE POLICY "read scrape_runs" ON scrape_runs FOR SELECT USING (true);
 
 -- Auto-mark postings as not-new after 24 hours.
 -- Call from a Supabase scheduled job, or from run_all.py after each scrape.

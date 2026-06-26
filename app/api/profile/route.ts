@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { geocodeAddress } from "@/lib/geocode";
+import { triggerScrapeWorkflow } from "@/lib/github";
 import type { UserProfile } from "@/lib/types";
 
 export async function GET() {
@@ -44,7 +45,9 @@ export async function POST(request: NextRequest) {
   // Only re-geocode the home base when the address actually changed.
   const { data: existing } = await supabase
     .from("user_profile")
-    .select("home_address, home_latitude, home_longitude")
+    .select(
+      "home_address, home_latitude, home_longitude, target_subjects, ideal_role_description, must_haves, nice_to_haves, resume_text",
+    )
     .eq("user_id", user.id)
     .maybeSingle();
 
@@ -88,6 +91,19 @@ export async function POST(request: NextRequest) {
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+
+  // If a scoring-relevant field changed, kick off a scrape run so scores refresh
+  // soon (the scraper re-scores postings older than the profile's updated_at).
+  const scoringChanged =
+    JSON.stringify(existing?.target_subjects ?? null) !==
+      JSON.stringify(row.target_subjects) ||
+    (existing?.ideal_role_description ?? null) !== row.ideal_role_description ||
+    (existing?.must_haves ?? null) !== row.must_haves ||
+    (existing?.nice_to_haves ?? null) !== row.nice_to_haves ||
+    (existing?.resume_text ?? null) !== row.resume_text;
+  if (scoringChanged) {
+    await triggerScrapeWorkflow();
   }
 
   return NextResponse.json({ profile: data });

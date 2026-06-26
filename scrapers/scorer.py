@@ -9,14 +9,24 @@ from typing import Any
 
 import anthropic
 
-MODEL = "claude-sonnet-4-6"
+# Model is configurable. Default to a CHEAP model (Haiku) for bulk scoring — set
+# SCORER_MODEL=claude-sonnet-4-6 for higher-quality scoring.
+MODEL = os.environ.get("SCORER_MODEL", "claude-haiku-4-5-20251001")
 MAX_TOKENS = 300
 
-SYSTEM_PROMPT = (
-    "You are a relevance scoring assistant for a GENERAL elementary classroom teacher \n"
-    "job seeker in the Chicago area. The user is seeking general elementary classroom \n"
-    "teaching positions for grades 1-6 only. You receive a job posting and a user \n"
-    "profile. You return only valid JSON."
+# Static instructions + rules + output format. Cached across the run (it never
+# changes), so only the per-posting tokens cost full price.
+STATIC_SYSTEM = (
+    "You are a relevance scoring assistant for a GENERAL elementary classroom teacher "
+    "job seeker in the Chicago area, seeking grades 1-6 general-classroom teaching only.\n\n"
+    "Score each posting 1-10 for relevance to the user's profile. "
+    "10 = perfect match (general elementary classroom, grades 1-6). 1 = not relevant.\n"
+    "Automatically score a 1 for: special education (all forms), kindergarten-only, "
+    "PreK/early childhood, middle/junior high/high school, administration, athletics, or "
+    "non-teaching support staff (speech pathologist, aide, custodian) — even if it slipped "
+    'through the category filter. A grade span including grade 1+ (e.g. "K-2") is acceptable; '
+    "only kindergarten-ONLY or PreK-only score 1.\n\n"
+    'Return ONLY valid JSON, no other text: {"score": <integer 1-10>, "reason": "<1-2 sentences>"}'
 )
 
 
@@ -29,33 +39,27 @@ def _join(value: Any, default: str = "Not specified") -> str:
     return default
 
 
-def build_user_message(job_posting: dict[str, Any], user_profile: dict[str, Any]) -> str:
+def build_profile_block(user_profile: dict[str, Any]) -> str:
+    """The user's profile — identical across all postings in a run (so it's cached)."""
     resume = (user_profile.get("resume_text") or "")[:1000]
-    description = (job_posting.get("description") or "Not available")[:1500]
     return f"""USER PROFILE:
 - Target subjects/specializations: {_join(user_profile.get('target_subjects'))}
 - Preferred districts: {_join(user_profile.get('preferred_districts'))}
 - Ideal role: {_join(user_profile.get('ideal_role_description'))}
 - Must-haves: {_join(user_profile.get('must_haves'))}
-- Resume summary: {resume}
+- Resume summary: {resume}"""
 
-JOB POSTING:
+
+def build_job_block(job_posting: dict[str, Any]) -> str:
+    description = (job_posting.get("description") or "Not available")[:1500]
+    return f"""JOB POSTING:
 - Title: {job_posting.get('title', 'Not specified')}
 - District: {job_posting.get('district_name', 'Not specified')}
 - Category: {job_posting.get('category', 'Not specified')}
 - School/Location: {_join(job_posting.get('location'))}
 - Description: {description}
 
-TASK:
-Score this job posting for relevance to this user on a scale of 1-10.
-10 = perfect match (general elementary classroom, grades 1-6). 1 = not relevant.
-Automatically score a 1 for any position that is special education (all forms),
-kindergarten-only, PreK/early childhood, middle/junior high/high school, administration,
-athletics, or non-teaching support staff (e.g. speech pathologist, aide, custodian) —
-even if it slipped through the category filter. A grade span that includes grade 1 or
-above (e.g. "K-2") is acceptable; only kindergarten-ONLY or PreK-only should score 1.
-Return JSON only, no other text:
-{{"score": <integer 1-10>, "reason": "<1-2 sentence explanation>"}}"""
+Score this posting for the user above. JSON only."""
 
 
 def _parse_json(text: str) -> dict[str, Any]:
@@ -84,10 +88,17 @@ def score_posting(
         message = client.messages.create(
             model=MODEL,
             max_tokens=MAX_TOKENS,
-            system=SYSTEM_PROMPT,
-            messages=[
-                {"role": "user", "content": build_user_message(job_posting, user_profile)}
+            # Cache the static instructions + the user profile (same every call in
+            # a run) so re-scoring a whole feed costs mostly just per-posting tokens.
+            system=[
+                {"type": "text", "text": STATIC_SYSTEM},
+                {
+                    "type": "text",
+                    "text": build_profile_block(user_profile),
+                    "cache_control": {"type": "ephemeral"},
+                },
             ],
+            messages=[{"role": "user", "content": build_job_block(job_posting)}],
         )
         text = "".join(
             block.text for block in message.content if getattr(block, "type", None) == "text"
