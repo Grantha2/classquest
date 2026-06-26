@@ -37,13 +37,26 @@ export async function GET(request: NextRequest) {
     .eq("is_active", true); // hide closed/filled postings
 
   if (districts.length > 0) query = query.in("district_id", districts);
+  const grades = sp
+    .getAll("grade")
+    .map((g) => parseInt(g, 10))
+    .filter((g) => g >= 1 && g <= 6);
+  if (grades.length > 0) {
+    // posting matches if its grade_levels array overlaps the selected grades
+    query = query.overlaps("grade_levels", grades);
+  }
   if (subject) {
     query = query.or(
       `title.ilike.%${subject}%,category.ilike.%${subject}%,description.ilike.%${subject}%`,
     );
   }
   if (minScore > 1) query = query.gte("relevance_score", minScore);
-  if (isNew) query = query.eq("is_new", true);
+  if (isNew) {
+    // "New" = first seen in the last 24h (first_seen_at is immutable; is_new/
+    // scraped_at are unreliable because scraped_at is refreshed every run).
+    const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    query = query.gte("first_seen_at", cutoff);
+  }
   if (dateRange === "7d" || dateRange === "30d") {
     const days = dateRange === "7d" ? 7 : 30;
     const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000)

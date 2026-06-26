@@ -14,10 +14,11 @@ export default async function DashboardPage() {
   if (!user) redirect("/login");
 
   // Summary bar stats.
+  const cutoff24h = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
   const { count: newCount } = await supabase
     .from("job_postings")
     .select("*", { count: "exact", head: true })
-    .eq("is_new", true)
+    .gte("first_seen_at", cutoff24h)
     .eq("is_active", true);
 
   const { data: latest } = await supabase
@@ -38,7 +39,7 @@ export default async function DashboardPage() {
             Welcome back, {friendlyName} 👋
           </h1>
           <p className="mt-1 text-sm text-slate-500">
-            {newCount ?? 0} new posting{newCount === 1 ? "" : "s"} today
+            {newCount ?? 0} new posting{newCount === 1 ? "" : "s"} in the last 24h
             {latest?.scraped_at
               ? ` · Last updated ${new Date(latest.scraped_at).toLocaleString(
                   "en-US",

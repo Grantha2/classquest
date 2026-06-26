@@ -127,9 +127,24 @@ The orchestrator prints a run summary: districts scraped, new postings, postings
 
 ## Scoring behavior
 
+- Scored against the **most complete** `user_profile` row (`run_all.get_user_profile`), not
+  whatever row is first — so an empty stray row can't make every score generic.
 - Only postings with `relevance_score IS NULL` are scored (no re-scoring every run).
 - Capped at 150 postings/run to bound API cost.
 - A scoring failure sets the score to `null` so it's retried next run; it never crashes.
+
+## Coverage audit & tests
+
+- `python scrapers/audit.py` — read-only per-portal report: reachable? · raw fetched · kept ·
+  why the rest were dropped (by filter rule). Use it to confirm we're not silently
+  over-filtering or missing an unreachable portal.
+- `scrapers/.venv/Scripts/python.exe -m pytest scrapers/ -q` — locks in the title-filter
+  keep/drop decisions and the geocode query builder. (`pytest` is a dev-only dependency.)
+
+## Known limitations
+
+- **Single user.** Scoring uses one profile for the whole DB. Correct for one job-seeker; a
+  second user would need per-user scoring (each posting scored per profile).
 
 ## Phase 2 (not in scope)
 

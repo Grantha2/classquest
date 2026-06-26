@@ -145,6 +145,7 @@ class ApplitrackScraper(BaseScraper):
             try:
                 resp = self.get(self.output_url(host, category))
                 if "postingsList" in resp.text or "AppliTrackOutput" in resp.text:
+                    self.reachable = True
                     return resp.text
             except Exception as exc:  # noqa: BLE001
                 last_exc = exc
@@ -157,6 +158,7 @@ class ApplitrackScraper(BaseScraper):
             try:
                 resp = self.get(self.default_aspx_url(host, category))
                 if "AppliTrackJobId" in resp.text:
+                    self.reachable = True
                     return resp.text
             except Exception:  # noqa: BLE001
                 continue

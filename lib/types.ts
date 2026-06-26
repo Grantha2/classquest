@@ -29,9 +29,11 @@ export interface JobPosting {
   external_url: string;
   external_id: string | null;
   is_new: boolean;
+  first_seen_at: string | null; // immutable; basis for the "new" badge
   scraped_at: string; // ISO timestamp
   relevance_score: number | null; // 1-10
   relevance_reason: string | null;
+  grade_levels: number[] | null; // grades 1-6 named in the title
   latitude: number | null;
   longitude: number | null;
   geocoded_address: string | null;
@@ -69,6 +71,7 @@ export interface TrackerEntry {
 // ── Dashboard filter query shape ──
 export interface JobFilters {
   district?: string[];
+  grades?: number[]; // grade levels 1-6
   subject?: string;
   minScore?: number;
   isNew?: boolean;

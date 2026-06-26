@@ -27,6 +27,11 @@ export function JobCard({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // "New" = first seen in the last 24h (immutable first_seen_at).
+  const isNew =
+    posting.first_seen_at != null &&
+    Date.now() - Date.parse(posting.first_seen_at) < 24 * 60 * 60 * 1000;
+
   async function track(next: ApplicationStatus) {
     setBusy(true);
     setError(null);
@@ -51,7 +56,7 @@ export function JobCard({
   return (
     <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition hover:shadow-md">
       <div className="mb-2 flex flex-wrap items-center gap-2">
-        {posting.is_new && (
+        {isNew && (
           <span className="rounded-full bg-sky-500 px-2.5 py-1 text-xs font-bold uppercase tracking-wide text-white">
             New
           </span>
@@ -77,11 +82,19 @@ export function JobCard({
         {formatDate(posting.posting_date)}
       </p>
 
-      {posting.category && (
-        <span className="mt-3 inline-block rounded-md bg-sky-50 px-2 py-0.5 text-xs font-medium text-sky-700">
-          {posting.category}
-        </span>
-      )}
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        {posting.category && (
+          <span className="inline-block rounded-md bg-sky-50 px-2 py-0.5 text-xs font-medium text-sky-700">
+            {posting.category}
+          </span>
+        )}
+        {posting.grade_levels && posting.grade_levels.length > 0 && (
+          <span className="inline-block rounded-md bg-grow-100 px-2 py-0.5 text-xs font-medium text-grow-600">
+            Grade{posting.grade_levels.length > 1 ? "s" : ""}{" "}
+            {posting.grade_levels.join(", ")}
+          </span>
+        )}
+      </div>
 
       {posting.relevance_reason && (
         <p className="mt-3 text-sm italic text-slate-500">
