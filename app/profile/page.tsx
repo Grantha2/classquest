@@ -27,7 +27,10 @@ export default async function ProfilePage() {
         <p className="mb-6 mt-1 text-sm text-slate-500">
           The better this is, the smarter ClassQuest can rank postings for you.
         </p>
-        <ProfileForm initialProfile={(profile as UserProfile) ?? null} />
+        <ProfileForm
+          initialProfile={(profile as UserProfile) ?? null}
+          userEmail={user.email}
+        />
       </main>
     </div>
   );

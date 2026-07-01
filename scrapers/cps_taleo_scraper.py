@@ -29,6 +29,7 @@ from urllib.parse import urlparse
 import httpx
 
 from base_scraper import BaseScraper, DEFAULT_HEADERS
+from employment import extract_employment_type
 from title_filter import is_relevant_title
 
 PAGE_SIZE = 25
@@ -155,6 +156,7 @@ class CPSTaleoScraper(BaseScraper):
             "description": None,
             "posting_date": None,  # raw Taleo date format varies; leave for scorer
             "closing_date": None,
+            "employment_type": extract_employment_type(title),
         }
 
     # -- searchjobs strategy -------------------------------------------
@@ -253,6 +255,7 @@ class CPSTaleoScraper(BaseScraper):
                             "description": None,
                             "posting_date": None,
                             "closing_date": None,
+                            "employment_type": extract_employment_type(title),
                         }
                     )
                 browser.close()

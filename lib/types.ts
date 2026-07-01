@@ -16,6 +16,8 @@ export const APPLICATION_STATUSES: ApplicationStatus[] = [
   "rejected",
 ];
 
+export type EmploymentType = "full_time" | "part_time";
+
 export interface JobPosting {
   id: string;
   district_id: string;
@@ -26,6 +28,7 @@ export interface JobPosting {
   location: string | null;
   posting_date: string | null; // ISO date
   closing_date: string | null; // ISO date
+  employment_type: EmploymentType | null; // null = not stated in the posting
   external_url: string;
   external_id: string | null;
   is_new: boolean;
@@ -53,7 +56,33 @@ export interface UserProfile {
   home_address: string | null;
   home_latitude: number | null;
   home_longitude: number | null;
+  // Daily email digest (sent by the scrape cron)
+  digest_opt_in?: boolean;
+  digest_min_score?: number;
+  digest_last_sent_at?: string | null;
   updated_at?: string;
+}
+
+// The scoring-relevant profile fields. Filled count drives the profile
+// completeness meter and the dashboard's personalized-vs-generic state —
+// mirrors scrapers/run_all._profile_richness.
+export const SCORING_FIELDS = [
+  "resume_text",
+  "target_subjects",
+  "preferred_districts",
+  "ideal_role_description",
+  "must_haves",
+  "nice_to_haves",
+] as const;
+
+export function profileRichness(p: Partial<UserProfile> | null): number {
+  if (!p) return 0;
+  let n = 0;
+  for (const f of SCORING_FIELDS) {
+    const v = p[f];
+    if (Array.isArray(v) ? v.length > 0 : Boolean(v && String(v).trim())) n++;
+  }
+  return n;
 }
 
 export interface TrackerEntry {
@@ -75,8 +104,10 @@ export interface JobFilters {
   subject?: string;
   minScore?: number;
   isNew?: boolean;
+  bilingual?: boolean; // bilingual / dual-language postings only
+  employment?: EmploymentType; // FT/PT (postings with unknown type are excluded)
   dateRange?: "all" | "7d" | "30d";
-  sortBy?: "relevance" | "date" | "distance";
+  sortBy?: "relevance" | "date" | "distance" | "closing";
   radiusMi?: number; // within N miles of the user's home base
   page?: number;
 }

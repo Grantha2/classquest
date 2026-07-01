@@ -26,6 +26,23 @@ export async function GET() {
   return NextResponse.json({ profile: data ?? null });
 }
 
+// Fields the Claude scorer reads — a change to any of these makes existing
+// scores stale, so we kick the scrape workflow to re-score right away.
+const SCORING_FIELDS = [
+  "resume_text",
+  "target_subjects",
+  "preferred_districts",
+  "ideal_role_description",
+  "must_haves",
+  "nice_to_haves",
+] as const;
+
+function normalize(v: unknown): string {
+  if (v == null) return "";
+  if (Array.isArray(v)) return JSON.stringify(v);
+  return String(v);
+}
+
 export async function POST(request: NextRequest) {
   const supabase = createClient();
   const {
@@ -42,15 +59,13 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  // Only re-geocode the home base when the address actually changed.
   const { data: existing } = await supabase
     .from("user_profile")
-    .select(
-      "home_address, home_latitude, home_longitude, target_subjects, ideal_role_description, must_haves, nice_to_haves, resume_text",
-    )
+    .select("*") // need scoring fields + home base + updated_at + digest prefs
     .eq("user_id", user.id)
     .maybeSingle();
 
+  // Only re-geocode the home base when the address actually changed.
   const newAddress = body.home_address?.trim() || null;
   let homeLat = existing?.home_latitude ?? null;
   let homeLng = existing?.home_longitude ?? null;
@@ -69,18 +84,34 @@ export async function POST(request: NextRequest) {
     homeLng = geo?.lng ?? null;
   }
 
-  const row = {
-    user_id: user.id,
+  // Did a field the scorer reads change? Drives BOTH the immediate re-score
+  // kick and updated_at: the scraper re-scores anything with
+  // scored_at < updated_at, so updated_at must only move when the scoring
+  // inputs move — an address/digest tweak must not trigger a full re-score.
+  const scoringValues: Record<(typeof SCORING_FIELDS)[number], unknown> = {
     resume_text: body.resume_text ?? null,
     target_subjects: body.target_subjects ?? null,
     preferred_districts: body.preferred_districts ?? null,
     ideal_role_description: body.ideal_role_description ?? null,
     must_haves: body.must_haves ?? null,
     nice_to_haves: body.nice_to_haves ?? null,
+  };
+  const scoringChanged = SCORING_FIELDS.some(
+    (f) => normalize(scoringValues[f]) !== normalize(existing?.[f]),
+  );
+
+  const row = {
+    user_id: user.id,
+    ...scoringValues,
     home_address: newAddress,
     home_latitude: homeLat,
     home_longitude: homeLng,
-    updated_at: new Date().toISOString(),
+    digest_opt_in: body.digest_opt_in ?? false,
+    digest_min_score: body.digest_min_score ?? 7,
+    updated_at:
+      scoringChanged || !existing?.updated_at
+        ? new Date().toISOString()
+        : existing.updated_at,
   };
 
   const { data, error } = await supabase
@@ -93,18 +124,15 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  // If a scoring-relevant field changed, kick off a scrape run so scores refresh
-  // soon (the scraper re-scores postings older than the profile's updated_at).
-  const scoringChanged =
-    JSON.stringify(existing?.target_subjects ?? null) !==
-      JSON.stringify(row.target_subjects) ||
-    (existing?.ideal_role_description ?? null) !== row.ideal_role_description ||
-    (existing?.must_haves ?? null) !== row.must_haves ||
-    (existing?.nice_to_haves ?? null) !== row.nice_to_haves ||
-    (existing?.resume_text ?? null) !== row.resume_text;
-  if (scoringChanged) {
-    await triggerScrapeWorkflow();
-  }
+  // Kick a re-score only when a field the scorer reads actually changed —
+  // an address or digest tweak shouldn't burn a scrape run.
+  const scoreRefreshTriggered = scoringChanged
+    ? await triggerScrapeWorkflow()
+    : false;
 
-  return NextResponse.json({ profile: data });
+  return NextResponse.json({
+    profile: data,
+    scoring_changed: scoringChanged,
+    score_refresh_triggered: scoreRefreshTriggered,
+  });
 }

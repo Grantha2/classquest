@@ -11,6 +11,7 @@ import type {
   TrackerEntry,
   UserProfile,
 } from "@/lib/types";
+import { profileRichness, SCORING_FIELDS } from "@/lib/types";
 import { FilterBar } from "@/components/FilterBar";
 import { JobCard } from "@/components/JobCard";
 
@@ -35,6 +36,8 @@ function buildQuery(
   if (filters.minScore && filters.minScore > 1)
     p.set("minScore", String(filters.minScore));
   if (filters.isNew) p.set("isNew", "true");
+  if (filters.bilingual) p.set("bilingual", "true");
+  if (filters.employment) p.set("employment", filters.employment);
   if (filters.dateRange && filters.dateRange !== "all")
     p.set("dateRange", filters.dateRange);
   p.set("sortBy", filters.sortBy ?? "relevance");
@@ -58,6 +61,10 @@ export function DashboardClient() {
   const [jobs, setJobs] = useState<JobPosting[]>([]);
   const [total, setTotal] = useState(0);
   const [home, setHome] = useState<HomeBase>(null);
+  // null = profile not loaded yet (don't flash the "generic" banner)
+  const [profile, setProfile] = useState<UserProfile | null | undefined>(
+    undefined,
+  );
   const [statusMap, setStatusMap] = useState<Record<string, ApplicationStatus>>(
     {},
   );
@@ -81,11 +88,12 @@ export function DashboardClient() {
       .then((r) => (r.ok ? r.json() : { profile: null }))
       .then((data: { profile: UserProfile | null }) => {
         const p = data.profile;
+        setProfile(p);
         if (p?.home_latitude != null && p?.home_longitude != null) {
           setHome({ lat: p.home_latitude, lng: p.home_longitude });
         }
       })
-      .catch(() => void 0);
+      .catch(() => setProfile(null));
   }, []);
 
   const load = useCallback(async () => {
@@ -118,9 +126,27 @@ export function DashboardClient() {
   }
 
   const homeBaseSet = home != null;
+  // undefined = still loading; 0 filled fields = scores are generic.
+  const richness = profile === undefined ? null : profileRichness(profile);
 
   return (
     <div className="space-y-5">
+      {richness !== null && richness === 0 && (
+        <div className="rounded-2xl border border-sunshine-100 bg-sunshine-100/60 px-5 py-4">
+          <p className="font-semibold text-slate-800">
+            ⚠️ Your scores are generic right now
+          </p>
+          <p className="mt-1 text-sm text-slate-600">
+            Claude is ranking postings without knowing what you want.{" "}
+            <Link href="/profile" className="font-semibold text-sky-700 underline">
+              Fill out your profile
+            </Link>{" "}
+            (resume, subjects, ideal role…) and every posting re-scores against
+            it automatically.
+          </p>
+        </div>
+      )}
+
       <FilterBar
         filters={filters}
         onChange={update}
@@ -129,7 +155,17 @@ export function DashboardClient() {
 
       <div className="flex items-center justify-between">
         <p className="text-sm text-slate-500">
-          {loading ? "Loading…" : `${total} posting${total === 1 ? "" : "s"} match your filters`}
+          {loading
+            ? "Loading…"
+            : `${total} posting${total === 1 ? "" : "s"} match your filters`}
+          {!loading && richness !== null && richness > 0 && (
+            <span
+              className="ml-2 inline-flex items-center gap-1 rounded-full bg-grow-100 px-2 py-0.5 text-xs font-semibold text-grow-600"
+              title={`Ranked against your profile (${richness}/${SCORING_FIELDS.length} fields filled)`}
+            >
+              ✨ Ranked for you
+            </span>
+          )}
         </p>
         <div className="inline-flex rounded-lg border border-slate-300 p-0.5">
           {(["list", "map"] as const).map((v) => (
