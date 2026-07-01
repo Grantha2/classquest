@@ -8,7 +8,9 @@ import { StatusBadge } from "./StatusBadge";
 
 function formatDate(d: string | null): string {
   if (!d) return "—";
-  const date = new Date(d);
+  // Date-only strings ("2026-07-01") parse as UTC midnight, which renders as
+  // the PREVIOUS day in Chicago. Append a time so it parses as local.
+  const date = new Date(/^\d{4}-\d{2}-\d{2}$/.test(d) ? `${d}T00:00:00` : d);
   if (isNaN(date.getTime())) return "—";
   return date.toLocaleDateString("en-US", {
     month: "short",
