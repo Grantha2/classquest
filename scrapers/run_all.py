@@ -25,7 +25,9 @@ from supabase import Client, create_client
 
 from applitrack_scraper import ApplitrackScraper
 from cps_taleo_scraper import CPSTaleoScraper
+from digest import send_daily_digest
 from district_config import DISTRICTS
+from employment import extract_employment_type
 from geocode import geocode
 from scorer import score_posting
 from title_filter import extract_grades
@@ -46,6 +48,7 @@ INSERT_COLUMNS = (
     "closing_date",
     "external_url",
     "external_id",
+    "employment_type",
 )
 
 MAX_SCORE_PER_RUN = 150  # bound Claude API cost per run
@@ -83,11 +86,12 @@ def upsert_postings(
 
     existing = (
         supabase.table("job_postings")
-        .select("external_id")
+        .select("external_id, closing_date, employment_type")
         .eq("district_id", district_id)
         .execute()
     )
-    existing_ids = {row["external_id"] for row in (existing.data or [])}
+    existing_by_id = {row["external_id"]: row for row in (existing.data or [])}
+    existing_ids = set(existing_by_id)
 
     new_rows = [p for p in postings if p["external_id"] not in existing_ids]
     seen_ids = [eid for eid in current_ids if eid in existing_ids]
@@ -100,6 +104,22 @@ def upsert_postings(
             supabase.table("job_postings").update(
                 {"scraped_at": now, "is_active": True}
             ).eq("district_id", district_id).in_("external_id", batch).execute()
+
+    # Closing dates get added/extended after first posting; employment type may
+    # only be parseable once the block carries it. Refresh when newly known.
+    for p in postings:
+        row = existing_by_id.get(p["external_id"])
+        if not row:
+            continue
+        changes = {
+            col: p.get(col)
+            for col in ("closing_date", "employment_type")
+            if p.get(col) and p.get(col) != row.get(col)
+        }
+        if changes:
+            supabase.table("job_postings").update(changes).eq(
+                "district_id", district_id
+            ).eq("external_id", p["external_id"]).execute()
 
     # Retire postings no longer in the feed (closed / filled).
     for i in range(0, len(stale_ids), 100):
@@ -128,22 +148,47 @@ def upsert_postings(
 
 
 def score_unscored(supabase: Client, profile: dict[str, Any]) -> tuple[int, int]:
-    """Score postings with relevance_score IS NULL. Returns (scored, errors)."""
+    """Score active postings that are unscored OR stale (scored before the
+    profile's last save: scored_at < user_profile.updated_at), so scores track
+    the profile automatically. Returns (scored, errors)."""
     if not os.environ.get("ANTHROPIC_API_KEY"):
         print("[score] ANTHROPIC_API_KEY not set — skipping scoring")
         return (0, 0)
+    if _profile_richness(profile) == 0:
+        # Guardrail: never score against an empty profile — every score would
+        # be generic and would then look "done" and never refresh.
+        print("[score] profile is empty — skipping scoring until it's filled in")
+        return (0, 0)
 
-    rows = (
+    unscored = (
         supabase.table("job_postings")
         .select("*")
         .is_("relevance_score", "null")
+        .eq("is_active", True)
         .limit(MAX_SCORE_PER_RUN)
         .execute()
-    )
-    unscored = rows.data or []
-    scored = errors = 0
+    ).data or []
 
-    for row in unscored:
+    stale: list[dict[str, Any]] = []
+    budget = MAX_SCORE_PER_RUN - len(unscored)
+    profile_updated = profile.get("updated_at")
+    if budget > 0 and profile_updated:
+        # scored_at < updated_at; NULL scored_at rows are excluded by SQL and
+        # (post-migration-06 backfill) shouldn't exist for scored rows.
+        stale = (
+            supabase.table("job_postings")
+            .select("*")
+            .eq("is_active", True)
+            .lt("scored_at", profile_updated)
+            .order("relevance_score", desc=True)  # refresh the top of the feed first
+            .limit(budget)
+            .execute()
+        ).data or []
+    if stale:
+        print(f"  re-scoring {len(stale)} stale posting(s) against the updated profile")
+
+    scored = errors = 0
+    for row in unscored + stale:
         result = score_posting(row, profile)
         if result["score"] is None:
             errors += 1
@@ -152,6 +197,7 @@ def score_unscored(supabase: Client, profile: dict[str, Any]) -> tuple[int, int]
             {
                 "relevance_score": result["score"],
                 "relevance_reason": result["reason"],
+                "scored_at": datetime.now(timezone.utc).isoformat(),
             }
         ).eq("id", row["id"]).execute()
         scored += 1
@@ -316,6 +362,29 @@ def backfill_grades(supabase: Client) -> int:
     return len(rows)
 
 
+def backfill_employment(supabase: Client) -> int:
+    """Parse FT/PT from the stored title+description of active rows that don't
+    have it yet. Rows with no signal stay NULL (re-checked cheaply each run —
+    one select, updates only when a signal is found)."""
+    rows = (
+        supabase.table("job_postings")
+        .select("id, title, description")
+        .is_("employment_type", "null")
+        .eq("is_active", True)
+        .limit(1000)
+        .execute()
+    ).data or []
+    updated = 0
+    for r in rows:
+        etype = extract_employment_type(r.get("title"), r.get("description"))
+        if etype:
+            supabase.table("job_postings").update({"employment_type": etype}).eq(
+                "id", r["id"]
+            ).execute()
+            updated += 1
+    return updated
+
+
 def _profile_richness(p: dict[str, Any]) -> int:
     """How many scoring-relevant fields a profile actually has filled in."""
     score = 0
@@ -434,11 +503,21 @@ def main() -> None:
     print("\n=== Backfilling grade levels ===")
     print(f"  grade_levels set on {backfill_grades(supabase)} row(s)")
 
+    print("\n=== Backfilling employment type ===")
+    print(f"  employment_type set on {backfill_employment(supabase)} row(s)")
+
     print("\n=== Geocoding new postings ===")
     geocoded, geocode_failed = geocode_postings(supabase)
 
-    print("\n=== Scoring unscored postings ===")
+    print("\n=== Scoring unscored + stale postings ===")
     scored, score_errors = score_unscored(supabase, profile)
+
+    print("\n=== Daily email digest ===")
+    try:
+        digest_status = send_daily_digest(supabase, profile)
+    except Exception as exc:  # noqa: BLE001 - digest must never fail the run
+        digest_status = f"failed: {exc}"
+    print(f"  {digest_status}")
 
     # Roll postings older than 24h out of the "new" state.
     try:
@@ -453,6 +532,7 @@ def main() -> None:
     print(f"Geocoded          : {geocoded} (failed {geocode_failed})")
     print(f"Postings scored   : {scored}")
     print(f"Scoring errors    : {score_errors}")
+    print(f"Digest            : {digest_status}")
     print(f"District errors   : {len(errors)}")
     for err in errors:
         print(f"  - {err}")

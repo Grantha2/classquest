@@ -28,6 +28,7 @@ from urllib.parse import quote_plus
 from bs4 import BeautifulSoup
 
 from base_scraper import BaseScraper
+from employment import extract_employment_type
 from title_filter import is_relevant_title
 
 # Frontline data hosts that serve Output.asp / default.aspx (tried in order).
@@ -44,6 +45,11 @@ _DISTRICT_FIELD_RE = re.compile(
     re.IGNORECASE,
 )
 _DATE_RE = re.compile(r"Date Posted:\s*([0-1]?\d/[0-3]?\d/\d{4})")
+# "Closing Date 07/15/2026" / "Closing Date: Until Filled" (no date -> None).
+_CLOSING_RE = re.compile(
+    r"(?:Closing Date|Application Deadline)[:\s]+([0-1]?\d/[0-3]?\d/\d{4})",
+    re.IGNORECASE,
+)
 _LOCATION_RE = re.compile(
     r"Location:\s*(.+?)\s*(?:Additional Information|Show/Hide|Date Available"
     r"|Date Posted|Position Type|Attachment|SUMMARY|Closing|Email To|Print|Apply|$)",
@@ -72,11 +78,19 @@ def _date_to_iso(mmddyyyy: str) -> str | None:
 
 
 def _extract_fields(block_text: str) -> dict[str, Any]:
-    """Pull Location / Date Posted out of a posting block's text."""
-    out: dict[str, Any] = {"location": None, "posting_date": None}
+    """Pull Location / Date Posted / Closing Date / FT-PT out of a posting block."""
+    out: dict[str, Any] = {
+        "location": None,
+        "posting_date": None,
+        "closing_date": None,
+        "employment_type": extract_employment_type(block_text),
+    }
     dm = _DATE_RE.search(block_text)
     if dm:
         out["posting_date"] = _date_to_iso(dm.group(1))
+    cm = _CLOSING_RE.search(block_text)
+    if cm:
+        out["closing_date"] = _date_to_iso(cm.group(1))
     lm = _LOCATION_RE.search(block_text)
     if lm:
         loc = lm.group(1).strip(" -| ")
@@ -226,7 +240,8 @@ class ApplitrackScraper(BaseScraper):
                     "location": fields["location"],
                     "description": description or None,
                     "posting_date": fields["posting_date"],
-                    "closing_date": None,
+                    "closing_date": fields["closing_date"],
+                    "employment_type": fields["employment_type"],
                 }
             )
         return postings
@@ -259,6 +274,7 @@ class ApplitrackScraper(BaseScraper):
                     "description": None,
                     "posting_date": None,
                     "closing_date": None,
+                    "employment_type": extract_employment_type(title),
                 },
             )
         return list(by_id.values())

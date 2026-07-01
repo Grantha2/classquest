@@ -86,6 +86,7 @@ class BaseScraper(ABC):
 
         Each dict should contain at least:
             district_id, district_name, title, external_url, external_id,
-            category, location, description, posting_date, closing_date
+            category, location, description, posting_date, closing_date,
+            employment_type
         """
         raise NotImplementedError

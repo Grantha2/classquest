@@ -30,3 +30,7 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
           CLASSQUEST_USER_EMAIL: ${{ secrets.CLASSQUEST_USER_EMAIL }}
+          # Daily email digest (optional — digest is skipped if unset)
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          RESEND_FROM: ${{ vars.RESEND_FROM }}
+          CLASSQUEST_APP_URL: ${{ vars.CLASSQUEST_APP_URL }}
