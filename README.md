@@ -23,6 +23,10 @@ A personal job aggregator + application tracker for an elementary educator job-h
 | Cron | GitHub Actions (3× daily) |
 | Deploy | Vercel |
 
+## Engineering documentation
+
+Comprehensive maintainer documentation now lives in [`docs/README.md`](docs/README.md). Start there for architecture, database, API, scraper, operations, security, development, and contribution guides.
+
 ## Project layout
 
 ```
@@ -73,7 +77,7 @@ npm run dev                  # http://localhost:3000
 
 ### 3. Environment variables
 
-Fill `.env.local` (web app) — and set the **server** keys (`SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_MAPS_API_KEY`) as GitHub Actions secrets and Vercel env vars too:
+Fill `.env.local` (web app) — and set the server-side keys in GitHub Actions and/or Vercel wherever the relevant runtime uses them:
 
 | Variable | Where it's used | Notes |
 |---|---|---|
@@ -83,6 +87,10 @@ Fill `.env.local` (web app) — and set the **server** keys (`SUPABASE_URL`, `SU
 | `SUPABASE_SERVICE_KEY` | Python scrapers | **service role** key — bypasses RLS, server-only, never expose |
 | `ANTHROPIC_API_KEY` | scorer | from [console.anthropic.com](https://console.anthropic.com) |
 | `GOOGLE_MAPS_API_KEY` | geocoding (scraper + `/api/profile`) | Google Cloud Geocoding API, billing enabled; server-only |
+| `CLASSQUEST_USER_EMAIL` | scraper profile selection | recommended GitHub Actions secret for choosing the intended profile |
+| `SCORER_MODEL` | scorer | optional Anthropic model override; defaults to the low-cost scorer model |
+| `GITHUB_DISPATCH_TOKEN` | `/api/profile` | optional Vercel/server token to dispatch `scrape.yml` after scoring-relevant profile changes |
+| `GITHUB_REPO` | `/api/profile` | optional `owner/repo` override for workflow dispatch |
 
 ### 4. Create your login + profile
 
@@ -98,7 +106,7 @@ python -m venv .venv && .venv/Scripts/activate   # Windows
 #   source .venv/bin/activate                     # macOS/Linux
 pip install -r requirements.txt
 playwright install chromium                       # only needed for the CPS fallback
-# from the repo root, with SUPABASE_URL / SUPABASE_SERVICE_KEY / ANTHROPIC_API_KEY set:
+# from the repo root, with SUPABASE_URL / SUPABASE_SERVICE_KEY set; add ANTHROPIC_API_KEY and GOOGLE_MAPS_API_KEY for scoring/geocoding:
 python scrapers/run_all.py
 ```
 
@@ -107,13 +115,13 @@ The orchestrator prints a run summary: districts scraped, new postings, postings
 ### 6. Wire the cron (GitHub Actions)
 
 1. Push this repo to GitHub.
-2. **Repo Settings → Secrets and variables → Actions** — add `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, `ANTHROPIC_API_KEY`.
+2. **Repo Settings → Secrets and variables → Actions** — add `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_MAPS_API_KEY`, and `CLASSQUEST_USER_EMAIL`; optionally add `SCORER_MODEL`.
 3. **Actions tab → "ClassQuest — Scrape Job Postings" → Run workflow** to test the manual trigger. After that it runs at 7am / 12pm / 5pm CST.
 
 ### 7. Deploy to Vercel
 
 1. Import the repo at [vercel.com](https://vercel.com).
-2. Add all **5** env vars in the Vercel project settings.
+2. Add the web app env vars in the Vercel project settings (`NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `GOOGLE_MAPS_API_KEY`, plus optional `GITHUB_DISPATCH_TOKEN` / `GITHUB_REPO` for immediate re-scoring dispatch).
 3. Deploy. The app is the project root (no monorepo config needed).
 
 ---
@@ -129,9 +137,9 @@ The orchestrator prints a run summary: districts scraped, new postings, postings
 
 - Scored against the **most complete** `user_profile` row (`run_all.get_user_profile`), not
   whatever row is first — so an empty stray row can't make every score generic.
-- Only postings with `relevance_score IS NULL` are scored (no re-scoring every run).
+- Postings are scored when `scored_at` is missing or older than the selected profile `updated_at`, so profile edits can refresh scores without re-scoring every run.
 - Capped at 150 postings/run to bound API cost.
-- A scoring failure sets the score to `null` so it's retried next run; it never crashes.
+- A scoring failure leaves `scored_at` unchanged so it is retried next run; it never crashes.
 
 ## Coverage audit & tests
 
