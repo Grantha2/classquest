@@ -1,11 +1,12 @@
 """Claude relevance scoring for ClassQuest job postings.
 
 Cost discipline (the contract):
-  * Cheap model — Haiku.
-  * The profile is stable across a run, so it lives in the SYSTEM prefix with a
-    cache_control breakpoint: across the up-to-150 calls of a run, the profile
-    prefix is prompt-cached. (Haiku's minimum cacheable prefix is ~4096 tokens;
-    a small profile silently skips the cache, which is harmless.)
+  * Cheap model — Haiku by default; override with SCORER_MODEL for
+    higher-quality scoring (e.g. SCORER_MODEL=claude-sonnet-4-6).
+  * The scoring rules + profile are stable across a run, so they live in the
+    SYSTEM prefix with a cache_control breakpoint: across the up-to-150 calls
+    of a run, the prefix is prompt-cached. (Haiku's minimum cacheable prefix
+    is ~4096 tokens; a small profile silently skips the cache — harmless.)
   * Only the per-posting content goes in the (uncached) user message.
   * run_all decides WHAT to score: unscored rows + rows whose scored_at is
     older than the profile's updated_at — never the whole table every run.
@@ -20,7 +21,7 @@ from typing import Any
 
 import anthropic
 
-MODEL = "claude-haiku-4-5"
+MODEL = os.environ.get("SCORER_MODEL", "claude-haiku-4-5")
 MAX_TOKENS = 300
 
 _client: anthropic.Anthropic | None = None

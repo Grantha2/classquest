@@ -1,5 +1,5 @@
 -- ClassQuest — daily email digest opt-in + employment type (FT/PT).
--- Run in the Supabase SQL editor. Idempotent.
+-- Run in the Supabase SQL editor (after 06_scrape_runs + 07_scored_at). Idempotent.
 
 -- ── Digest preferences (one user; lives on the profile) ──
 -- The scrape cron sends at most one digest per day (guarded by

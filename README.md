@@ -71,8 +71,8 @@ npm run dev                  # http://localhost:3000
    - *Upgrading an existing project?* Run the numbered migrations you're missing, in order:
      [`02_location.sql`](supabase/02_location.sql) · [`03_active.sql`](supabase/03_active.sql) ·
      [`04_first_seen.sql`](supabase/04_first_seen.sql) · [`05_grades.sql`](supabase/05_grades.sql) ·
-     [`06_scoring_freshness.sql`](supabase/06_scoring_freshness.sql) ·
-     [`07_digest_employment.sql`](supabase/07_digest_employment.sql). All are idempotent.
+     [`06_scrape_runs.sql`](supabase/06_scrape_runs.sql) · [`07_scored_at.sql`](supabase/07_scored_at.sql) ·
+     [`08_digest_employment.sql`](supabase/08_digest_employment.sql). All are idempotent.
 3. **Project Settings → API** — copy the values into your env (next step).
 
 ### 3. Environment variables

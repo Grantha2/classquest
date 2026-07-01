@@ -147,23 +147,34 @@ def upsert_postings(
     return len(new_rows)
 
 
-def score_unscored(supabase: Client, profile: dict[str, Any]) -> tuple[int, int]:
-    """Score active postings that are unscored OR stale (scored before the
-    profile's last save: scored_at < user_profile.updated_at), so scores track
-    the profile automatically. Returns (scored, errors)."""
+def score_postings(supabase: Client, profile: dict[str, Any]) -> tuple[int, int]:
+    """Score active postings that are new (scored_at NULL — also self-heals rows
+    scored before the scored_at migration) OR stale (scored before the profile's
+    last save: scored_at < user_profile.updated_at), capped per run.
+
+    Editing /profile bumps user_profile.updated_at, which makes every posting
+    stale so scores refresh — but only as fast as the cap, and only against a
+    real profile: skips entirely if the profile is empty (a generic score would
+    look "done" and never refresh).
+
+    Cost control: scorer.py prompt-caches the system+profile prefix across the
+    run, and the model is configurable via SCORER_MODEL (defaults to Haiku)."""
     if not os.environ.get("ANTHROPIC_API_KEY"):
-        print("[score] ANTHROPIC_API_KEY not set — skipping scoring")
+        print("[score] ANTHROPIC_API_KEY not set - skipping scoring")
         return (0, 0)
     if _profile_richness(profile) == 0:
-        # Guardrail: never score against an empty profile — every score would
-        # be generic and would then look "done" and never refresh.
-        print("[score] profile is empty — skipping scoring until it's filled in")
+        print("[score] profile is empty - skipping scoring (fill /profile to enable)")
         return (0, 0)
 
+    now_iso = datetime.now(timezone.utc).isoformat()
+    profile_updated = (profile.get("updated_at") or "").replace("+00:00", "Z")
+
+    # Never scored first (scored_at NULL excludes them from the lt() below,
+    # so the two sets are disjoint).
     unscored = (
         supabase.table("job_postings")
         .select("*")
-        .is_("relevance_score", "null")
+        .is_("scored_at", "null")
         .eq("is_active", True)
         .limit(MAX_SCORE_PER_RUN)
         .execute()
@@ -171,10 +182,7 @@ def score_unscored(supabase: Client, profile: dict[str, Any]) -> tuple[int, int]
 
     stale: list[dict[str, Any]] = []
     budget = MAX_SCORE_PER_RUN - len(unscored)
-    profile_updated = profile.get("updated_at")
     if budget > 0 and profile_updated:
-        # scored_at < updated_at; NULL scored_at rows are excluded by SQL and
-        # (post-migration-06 backfill) shouldn't exist for scored rows.
         stale = (
             supabase.table("job_postings")
             .select("*")
@@ -197,7 +205,7 @@ def score_unscored(supabase: Client, profile: dict[str, Any]) -> tuple[int, int]
             {
                 "relevance_score": result["score"],
                 "relevance_reason": result["reason"],
-                "scored_at": datetime.now(timezone.utc).isoformat(),
+                "scored_at": now_iso,
             }
         ).eq("id", row["id"]).execute()
         scored += 1
@@ -509,8 +517,8 @@ def main() -> None:
     print("\n=== Geocoding new postings ===")
     geocoded, geocode_failed = geocode_postings(supabase)
 
-    print("\n=== Scoring unscored + stale postings ===")
-    scored, score_errors = score_unscored(supabase, profile)
+    print("\n=== Scoring new/stale postings ===")
+    scored, score_errors = score_postings(supabase, profile)
 
     print("\n=== Daily email digest ===")
     try:
@@ -537,6 +545,28 @@ def main() -> None:
     for err in errors:
         print(f"  - {err}")
     print("=================================")
+
+    # Record this run so the dashboard has a reliable, scrape-driven freshness
+    # indicator (last scraped / N new this run) instead of inferring from rows.
+    try:
+        active_total = (
+            supabase.table("job_postings")
+            .select("id", count="exact", head=True)
+            .eq("is_active", True)
+            .execute()
+        ).count
+        supabase.table("scrape_runs").insert(
+            {
+                "districts_scraped": districts_scraped,
+                "new_postings": total_new,
+                "geocoded": geocoded,
+                "scored": scored,
+                "unreachable": len(unreachable),
+                "active_total": active_total,
+            }
+        ).execute()
+    except Exception as exc:  # noqa: BLE001
+        print(f"[warn] could not record scrape_run: {exc}")
 
 
 if __name__ == "__main__":

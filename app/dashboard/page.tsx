@@ -4,6 +4,9 @@ import { NavBar } from "@/components/NavBar";
 import { DashboardClient } from "./DashboardClient";
 
 export const dynamic = "force-dynamic";
+// Never serve cached Supabase reads here — the header must reflect the live DB
+// after each scrape (Next caches server-component fetches even on dynamic routes).
+export const fetchCache = "force-no-store";
 
 export default async function DashboardPage() {
   const supabase = createClient();
@@ -13,18 +16,11 @@ export default async function DashboardPage() {
 
   if (!user) redirect("/login");
 
-  // Summary bar stats.
-  const cutoff24h = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-  const { count: newCount } = await supabase
-    .from("job_postings")
-    .select("*", { count: "exact", head: true })
-    .gte("first_seen_at", cutoff24h)
-    .eq("is_active", true);
-
-  const { data: latest } = await supabase
-    .from("job_postings")
-    .select("scraped_at")
-    .order("scraped_at", { ascending: false })
+  // Scrape-driven freshness: the latest recorded run.
+  const { data: lastRun } = await supabase
+    .from("scrape_runs")
+    .select("run_at, new_postings, active_total")
+    .order("run_at", { ascending: false })
     .limit(1)
     .maybeSingle();
 
@@ -39,13 +35,13 @@ export default async function DashboardPage() {
             Welcome back, {friendlyName} 👋
           </h1>
           <p className="mt-1 text-sm text-slate-500">
-            {newCount ?? 0} new posting{newCount === 1 ? "" : "s"} in the last 24h
-            {latest?.scraped_at
-              ? ` · Last updated ${new Date(latest.scraped_at).toLocaleString(
-                  "en-US",
-                  { dateStyle: "medium", timeStyle: "short" },
-                )}`
-              : ""}
+            {lastRun
+              ? `${lastRun.active_total ?? 0} active posting${
+                  lastRun.active_total === 1 ? "" : "s"
+                } · ${lastRun.new_postings ?? 0} new in the latest scrape · Last scraped ${new Date(
+                  lastRun.run_at,
+                ).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" })}`
+              : "Scrapers run at 7am, 12pm, and 5pm daily."}
           </p>
         </div>
 

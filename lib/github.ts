@@ -1,14 +1,15 @@
-// Fire the scrape/score GitHub Actions workflow when the profile changes, so
-// scores re-personalize within ~a minute instead of waiting for the next cron.
-// Server-only (uses a repo-scoped token). Failing here must never fail a
-// profile save — callers treat `false` as "will refresh at the next cron run".
+// Fire the scrape/score GitHub Actions workflow on demand (e.g. after a
+// profile change) so scores re-personalize within ~a minute instead of waiting
+// for the next scheduled cron. Server-only (uses a repo-scoped token).
+// Best-effort: returns false (never throws) when unconfigured or failing —
+// callers treat that as "the scheduled run will cover it".
 
 const WORKFLOW_FILE = "scrape.yml";
 
-export async function triggerScoreRefresh(): Promise<boolean> {
+export async function triggerScrapeWorkflow(): Promise<boolean> {
   const token = process.env.GITHUB_DISPATCH_TOKEN;
-  const repo = process.env.GITHUB_REPO; // "owner/repo"
-  if (!token || !repo) return false;
+  if (!token) return false;
+  const repo = process.env.GITHUB_REPO || "Grantha2/classquest";
 
   try {
     const res = await fetch(

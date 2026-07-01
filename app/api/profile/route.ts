@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { geocodeAddress } from "@/lib/geocode";
-import { triggerScoreRefresh } from "@/lib/github";
+import { triggerScrapeWorkflow } from "@/lib/github";
 import type { UserProfile } from "@/lib/types";
 
 export async function GET() {
@@ -61,7 +61,7 @@ export async function POST(request: NextRequest) {
 
   const { data: existing } = await supabase
     .from("user_profile")
-    .select("*")
+    .select("*") // need scoring fields + home base + updated_at + digest prefs
     .eq("user_id", user.id)
     .maybeSingle();
 
@@ -126,7 +126,9 @@ export async function POST(request: NextRequest) {
 
   // Kick a re-score only when a field the scorer reads actually changed —
   // an address or digest tweak shouldn't burn a scrape run.
-  const scoreRefreshTriggered = scoringChanged ? await triggerScoreRefresh() : false;
+  const scoreRefreshTriggered = scoringChanged
+    ? await triggerScrapeWorkflow()
+    : false;
 
   return NextResponse.json({
     profile: data,

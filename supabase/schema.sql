@@ -24,7 +24,9 @@ CREATE TABLE IF NOT EXISTS job_postings (
   scraped_at TIMESTAMPTZ DEFAULT NOW(),
   relevance_score INTEGER,    -- 1-10, set by Claude API
   relevance_reason TEXT,      -- Claude's explanation
+  scored_at TIMESTAMPTZ,      -- when scored; re-scored when the profile is updated after this
   grade_levels SMALLINT[],    -- grades 1-6 named in the title (for the grade filter)
+  employment_type TEXT,       -- 'full_time' | 'part_time' | NULL (not stated)
   latitude DOUBLE PRECISION,  -- set by the geocoding pass
   longitude DOUBLE PRECISION,
   geocoded_address TEXT,
@@ -40,6 +42,8 @@ CREATE INDEX IF NOT EXISTS idx_job_postings_first_seen ON job_postings (first_se
 CREATE INDEX IF NOT EXISTS idx_job_postings_grades ON job_postings USING GIN (grade_levels);
 CREATE INDEX IF NOT EXISTS idx_job_postings_geocode_status ON job_postings (geocode_status);
 CREATE INDEX IF NOT EXISTS idx_job_postings_latlng ON job_postings (latitude, longitude);
+CREATE INDEX IF NOT EXISTS idx_job_postings_scored_at ON job_postings (scored_at);
+CREATE INDEX IF NOT EXISTS idx_job_postings_employment ON job_postings (employment_type);
 
 -- Shared geocode cache so a school/address is only looked up once.
 -- Service-role-only (scraper); RLS enabled with no policy denies anon/authenticated.
@@ -53,6 +57,24 @@ CREATE TABLE IF NOT EXISTS geocode_cache (
 );
 ALTER TABLE geocode_cache ENABLE ROW LEVEL SECURITY;
 GRANT ALL ON public.geocode_cache TO service_role;
+
+-- Per-scrape run record (scrape-driven freshness for the dashboard header).
+CREATE TABLE IF NOT EXISTS scrape_runs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  run_at TIMESTAMPTZ DEFAULT NOW(),
+  districts_scraped INTEGER,
+  new_postings INTEGER,
+  geocoded INTEGER,
+  scored INTEGER,
+  unreachable INTEGER,
+  active_total INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_scrape_runs_run_at ON scrape_runs (run_at DESC);
+GRANT SELECT ON public.scrape_runs TO anon, authenticated;
+GRANT ALL ON public.scrape_runs TO service_role;
+ALTER TABLE scrape_runs ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "read scrape_runs" ON scrape_runs;
+CREATE POLICY "read scrape_runs" ON scrape_runs FOR SELECT USING (true);
 
 -- Auto-mark postings as not-new after 24 hours.
 -- Call from a Supabase scheduled job, or from run_all.py after each scrape.
@@ -78,6 +100,9 @@ CREATE TABLE IF NOT EXISTS user_profile (
   home_address TEXT,              -- ZIP or address for "within N miles" filtering
   home_latitude DOUBLE PRECISION,
   home_longitude DOUBLE PRECISION,
+  digest_opt_in BOOLEAN NOT NULL DEFAULT FALSE,   -- daily email digest (scrape cron)
+  digest_min_score SMALLINT NOT NULL DEFAULT 7,
+  digest_last_sent_at TIMESTAMPTZ,
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
