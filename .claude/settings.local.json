@@ -3,13 +3,7 @@
     "allow": [
       "Bash(py -m py_compile scrapers/base_scraper.py scrapers/applitrack_scraper.py scrapers/cps_taleo_scraper.py scrapers/scorer.py scrapers/run_all.py scrapers/district_config.py)",
       "Bash(scrapers/.venv/Scripts/python.exe -m pip install --quiet pytest)",
-      "Bash(PYTHONUTF8=1 scrapers/.venv/Scripts/python.exe -m pytest scrapers/ -q)",
-      "Bash(git commit -m ' *)",
-      "Bash(gh pr create --title 'Close the profile→scoring loop, daily digest, closing-soon tracker, FT/PT + bilingual filters' --body ' *)",
-      "Bash(where.exe gh *)",
-      "Read(//c/Program Files/**)",
-      "Bash(.venv/Scripts/python.exe -m pytest . -q)",
-      "Bash(.venv/Scripts/python.exe -c \"import run_all, scorer, digest; print\\('imports ok; scorer MODEL =', scorer.MODEL\\)\")"
+      "Bash(PYTHONUTF8=1 scrapers/.venv/Scripts/python.exe -m pytest scrapers/ -q)"
     ]
   }
 }
