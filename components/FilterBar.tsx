@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import type { JobFilters } from "@/lib/types";
+import type { EmploymentType, JobFilters } from "@/lib/types";
 import { DISTRICTS, SUBJECT_OPTIONS } from "@/lib/districts";
 
 export function FilterBar({
@@ -124,6 +124,29 @@ export function FilterBar({
           </select>
         </div>
 
+        {/* Full-time / part-time */}
+        <div>
+          <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
+            Schedule
+          </label>
+          <select
+            value={filters.employment ?? ""}
+            onChange={(e) =>
+              onChange({
+                employment: (e.target.value || undefined) as
+                  | EmploymentType
+                  | undefined,
+              })
+            }
+            className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700"
+            title="Postings that don't state a schedule are only shown under Any"
+          >
+            <option value="">Any</option>
+            <option value="full_time">Full-time</option>
+            <option value="part_time">Part-time</option>
+          </select>
+        </div>
+
         {/* Min relevance slider */}
         <div>
           <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
@@ -197,6 +220,7 @@ export function FilterBar({
           >
             <option value="relevance">Relevance score</option>
             <option value="date">Date posted (newest)</option>
+            <option value="closing">Closing soon</option>
             {homeBaseSet && <option value="distance">Distance (nearest)</option>}
           </select>
         </div>
@@ -210,6 +234,19 @@ export function FilterBar({
             className="accent-sky-600"
           />
           New only
+        </label>
+
+        {/* Bilingual toggle */}
+        <label className="flex cursor-pointer items-center gap-2 pb-2 text-sm font-medium text-slate-700">
+          <input
+            type="checkbox"
+            checked={filters.bilingual ?? false}
+            onChange={(e) =>
+              onChange({ bilingual: e.target.checked || undefined })
+            }
+            className="accent-sky-600"
+          />
+          Bilingual / dual language
         </label>
       </div>
     </div>

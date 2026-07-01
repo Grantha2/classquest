@@ -18,7 +18,7 @@ A personal job aggregator + application tracker for an elementary educator job-h
 | Frontend | Next.js 14 (App Router), Tailwind CSS |
 | Auth + DB | Supabase (PostgreSQL + Supabase Auth) |
 | Scrapers | Python 3.11 · `httpx` · `BeautifulSoup4` · `supabase-py` · Playwright (CPS fallback) |
-| AI ranking | Anthropic Claude API (`claude-sonnet-4-6`) |
+| AI ranking | Anthropic Claude API (`claude-haiku-4-5`, prompt-cached profile) |
 | Maps | Leaflet + OpenStreetMap (CARTO) tiles · Google Geocoding API |
 | Cron | GitHub Actions (3× daily) |
 | Deploy | Vercel |
@@ -68,7 +68,11 @@ npm run dev                  # http://localhost:3000
 
 1. Create a project at [supabase.com](https://supabase.com).
 2. **SQL Editor → New query →** paste the contents of [`supabase/schema.sql`](supabase/schema.sql) and run it. This creates `job_postings`, `user_profile`, `application_tracker`, `geocode_cache`, the `mark_old_postings()` function, and the RLS policies.
-   - *Upgrading an existing project?* Run [`supabase/02_location.sql`](supabase/02_location.sql) to add the geocoding/home-base columns.
+   - *Upgrading an existing project?* Run the numbered migrations you're missing, in order:
+     [`02_location.sql`](supabase/02_location.sql) · [`03_active.sql`](supabase/03_active.sql) ·
+     [`04_first_seen.sql`](supabase/04_first_seen.sql) · [`05_grades.sql`](supabase/05_grades.sql) ·
+     [`06_scoring_freshness.sql`](supabase/06_scoring_freshness.sql) ·
+     [`07_digest_employment.sql`](supabase/07_digest_employment.sql). All are idempotent.
 3. **Project Settings → API** — copy the values into your env (next step).
 
 ### 3. Environment variables
@@ -83,6 +87,12 @@ Fill `.env.local` (web app) — and set the **server** keys (`SUPABASE_URL`, `SU
 | `SUPABASE_SERVICE_KEY` | Python scrapers | **service role** key — bypasses RLS, server-only, never expose |
 | `ANTHROPIC_API_KEY` | scorer | from [console.anthropic.com](https://console.anthropic.com) |
 | `GOOGLE_MAPS_API_KEY` | geocoding (scraper + `/api/profile`) | Google Cloud Geocoding API, billing enabled; server-only |
+| `CLASSQUEST_USER_EMAIL` | scorer + digest recipient | GitHub Actions secret |
+| `RESEND_API_KEY` | daily email digest (cron) | optional — digest skips if unset. [resend.com](https://resend.com) |
+| `RESEND_FROM` | digest sender | optional; defaults to Resend's test sender (delivers to the account owner only) |
+| `CLASSQUEST_APP_URL` | digest "open dashboard" link | optional |
+| `GITHUB_DISPATCH_TOKEN` | `/api/profile` on-save score refresh (Vercel) | optional — fine-grained token, Actions:write on this repo |
+| `GITHUB_REPO` | same | e.g. `Grantha2/classquest` |
 
 ### 4. Create your login + profile
 
@@ -127,11 +137,23 @@ The orchestrator prints a run summary: districts scraped, new postings, postings
 
 ## Scoring behavior
 
+- **Cheap by design:** Claude Haiku (`claude-haiku-4-5`), with the scoring rules + profile in a
+  prompt-cached system prefix (only the per-posting content varies per call).
 - Scored against the **most complete** `user_profile` row (`run_all.get_user_profile`), not
-  whatever row is first — so an empty stray row can't make every score generic.
-- Only postings with `relevance_score IS NULL` are scored (no re-scoring every run).
+  whatever row is first — so an empty stray row can't make every score generic. If the profile
+  is completely empty, scoring is **skipped** (a generic score would never refresh).
+- **Stale-only re-scoring:** unscored postings, plus active postings with
+  `scored_at < user_profile.updated_at` — so saving `/profile` re-personalizes every score.
+  Saving also fires a `workflow_dispatch` (when `GITHUB_DISPATCH_TOKEN` is set) so the refresh
+  happens within ~a minute instead of at the next cron run.
 - Capped at 150 postings/run to bound API cost.
 - A scoring failure sets the score to `null` so it's retried next run; it never crashes.
+
+## Daily email digest
+
+Opt-in on `/profile`. Sent by the **scrape cron** (not Vercel) via Resend: at most one email per
+day, containing postings first seen in the last 24h scoring ≥ your chosen bar. No matches → no
+email; later runs the same day re-check.
 
 ## Coverage audit & tests
 
@@ -148,9 +170,9 @@ The orchestrator prints a run summary: districts scraped, new postings, postings
 
 ## Phase 2 (not in scope)
 
-AI-assisted application submission, email alerts for high-relevance postings,
-resume/cover-letter tailoring, and interview prep. Today, **View Posting →** links
-out to each district's original posting for manual application.
+AI-assisted application submission, resume/cover-letter tailoring, and interview
+prep. Today, **View Posting →** links out to each district's original posting for
+manual application. (Email alerts shipped — see "Daily email digest" above.)
 ```
 
 > Build verified: `npm run build` passes (all routes + middleware compile); the Applitrack

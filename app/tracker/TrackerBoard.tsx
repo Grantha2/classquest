@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   DndContext,
   DragEndEvent,
@@ -15,6 +15,7 @@ import {
   type ApplicationStatus,
   type TrackerEntry,
 } from "@/lib/types";
+import { ClosingBadge, daysUntil } from "@/components/ClosingBadge";
 import { RelevanceChip } from "@/components/RelevanceChip";
 
 const COLUMN_LABELS: Record<ApplicationStatus, string> = {
@@ -52,8 +53,9 @@ function Card({
       onClick={onClick}
       className="cursor-grab rounded-xl border border-slate-200 bg-white p-3 shadow-sm active:cursor-grabbing"
     >
-      <div className="mb-1.5">
+      <div className="mb-1.5 flex flex-wrap items-center gap-1.5">
         <RelevanceChip score={job?.relevance_score ?? null} />
+        <ClosingBadge closingDate={job?.closing_date} />
       </div>
       <p className="text-sm font-semibold leading-snug text-slate-900">
         {job?.title ?? "Untitled posting"}
@@ -200,6 +202,20 @@ export function TrackerBoard() {
     );
   }
 
+  // Needs action: saved-but-not-applied postings whose window is closing
+  // (deadline within 7 days). Sorted most-urgent first.
+  const needsAction = entries
+    .filter((e) => {
+      if (e.status !== "saved") return false;
+      const days = daysUntil(e.job_postings?.closing_date);
+      return days !== null && days >= 0 && days <= 7;
+    })
+    .sort(
+      (a, b) =>
+        (daysUntil(a.job_postings?.closing_date) ?? 99) -
+        (daysUntil(b.job_postings?.closing_date) ?? 99),
+    );
+
   return (
     <>
       {error && (
@@ -207,6 +223,44 @@ export function TrackerBoard() {
           {error}
         </p>
       )}
+
+      {needsAction.length > 0 && (
+        <div className="mb-5 rounded-2xl border border-red-200 bg-red-50 p-4">
+          <h2 className="font-semibold text-red-800">
+            ⏰ Needs action — saved but closing soon
+          </h2>
+          <ul className="mt-2 space-y-2">
+            {needsAction.map((e) => (
+              <li
+                key={e.id}
+                className="flex flex-wrap items-center gap-2 text-sm"
+              >
+                <ClosingBadge closingDate={e.job_postings?.closing_date} />
+                <button
+                  onClick={() => setSelected(e)}
+                  className="font-semibold text-slate-800 hover:underline"
+                >
+                  {e.job_postings?.title ?? "Untitled posting"}
+                </button>
+                <span className="text-slate-500">
+                  {e.job_postings?.district_name}
+                </span>
+                {e.job_postings?.external_url && (
+                  <a
+                    href={e.job_postings.external_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="ml-auto font-semibold text-sky-700 hover:underline"
+                  >
+                    Apply →
+                  </a>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
         <div className="flex gap-4 overflow-x-auto pb-4">
           {APPLICATION_STATUSES.map((status) => (
@@ -241,7 +295,19 @@ function NotesModal({
   onSave: (notes: string) => void;
 }) {
   const [notes, setNotes] = useState(entry.notes ?? "");
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const job = entry.job_postings;
+
+  // Append a "[Jul 1] " stamp so notes read as a running log
+  // (call after interview, follow-up sent, …) without a schema change.
+  function addDatedNote() {
+    const stamp = new Date().toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+    });
+    setNotes((cur) => `${cur.trimEnd()}${cur.trim() ? "\n" : ""}[${stamp}] `);
+    textareaRef.current?.focus();
+  }
 
   return (
     <div
@@ -263,16 +329,25 @@ function NotesModal({
           Last updated {new Date(entry.updated_at).toLocaleString()}
         </p>
 
-        <label className="mt-4 block text-sm font-medium text-slate-700">
-          Notes
-        </label>
+        <div className="mt-4 flex items-center justify-between">
+          <label className="block text-sm font-medium text-slate-700">
+            Notes
+          </label>
+          <button
+            onClick={addDatedNote}
+            className="rounded-md border border-slate-300 px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"
+          >
+            + Dated note
+          </button>
+        </div>
         <textarea
+          ref={textareaRef}
           value={notes}
           onChange={(e) => setNotes(e.target.value)}
-          rows={5}
+          rows={6}
           autoFocus
           className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-100"
-          placeholder="Interview prep, contacts, follow-up dates…"
+          placeholder={"[Jul 1] Called the principal's office…\n[Jul 3] Sent follow-up email"}
         />
 
         <div className="mt-4 flex justify-end gap-2">

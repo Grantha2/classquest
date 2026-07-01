@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { ApplicationStatus, JobPosting } from "@/lib/types";
+import { ClosingBadge } from "./ClosingBadge";
 import { RelevanceChip } from "./RelevanceChip";
 import { StatusBadge } from "./StatusBadge";
 
@@ -62,6 +63,7 @@ export function JobCard({
           </span>
         )}
         <RelevanceChip score={posting.relevance_score} />
+        <ClosingBadge closingDate={posting.closing_date} />
         {posting.distance_mi != null && (
           <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-600">
             📍 {posting.distance_mi.toFixed(1)} mi
@@ -94,12 +96,22 @@ export function JobCard({
             {posting.grade_levels.join(", ")}
           </span>
         )}
+        {posting.employment_type && (
+          <span className="inline-block rounded-md bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600">
+            {posting.employment_type === "full_time" ? "Full-time" : "Part-time"}
+          </span>
+        )}
       </div>
 
       {posting.relevance_reason && (
-        <p className="mt-3 text-sm italic text-slate-500">
-          “{posting.relevance_reason}”
-        </p>
+        <div className="mt-3 rounded-lg border-l-4 border-sky-500 bg-sky-50 px-3 py-2">
+          <p className="text-xs font-semibold uppercase tracking-wide text-sky-600">
+            Why this score
+          </p>
+          <p className="mt-0.5 text-sm text-slate-700">
+            {posting.relevance_reason}
+          </p>
+        </div>
       )}
 
       {error && <p className="mt-3 text-sm text-red-600">{error}</p>}

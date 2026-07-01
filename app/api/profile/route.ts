@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { geocodeAddress } from "@/lib/geocode";
+import { triggerScoreRefresh } from "@/lib/github";
 import type { UserProfile } from "@/lib/types";
 
 export async function GET() {
@@ -25,6 +26,23 @@ export async function GET() {
   return NextResponse.json({ profile: data ?? null });
 }
 
+// Fields the Claude scorer reads — a change to any of these makes existing
+// scores stale, so we kick the scrape workflow to re-score right away.
+const SCORING_FIELDS = [
+  "resume_text",
+  "target_subjects",
+  "preferred_districts",
+  "ideal_role_description",
+  "must_haves",
+  "nice_to_haves",
+] as const;
+
+function normalize(v: unknown): string {
+  if (v == null) return "";
+  if (Array.isArray(v)) return JSON.stringify(v);
+  return String(v);
+}
+
 export async function POST(request: NextRequest) {
   const supabase = createClient();
   const {
@@ -41,13 +59,13 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  // Only re-geocode the home base when the address actually changed.
   const { data: existing } = await supabase
     .from("user_profile")
-    .select("home_address, home_latitude, home_longitude")
+    .select("*")
     .eq("user_id", user.id)
     .maybeSingle();
 
+  // Only re-geocode the home base when the address actually changed.
   const newAddress = body.home_address?.trim() || null;
   let homeLat = existing?.home_latitude ?? null;
   let homeLng = existing?.home_longitude ?? null;
@@ -66,18 +84,34 @@ export async function POST(request: NextRequest) {
     homeLng = geo?.lng ?? null;
   }
 
-  const row = {
-    user_id: user.id,
+  // Did a field the scorer reads change? Drives BOTH the immediate re-score
+  // kick and updated_at: the scraper re-scores anything with
+  // scored_at < updated_at, so updated_at must only move when the scoring
+  // inputs move — an address/digest tweak must not trigger a full re-score.
+  const scoringValues: Record<(typeof SCORING_FIELDS)[number], unknown> = {
     resume_text: body.resume_text ?? null,
     target_subjects: body.target_subjects ?? null,
     preferred_districts: body.preferred_districts ?? null,
     ideal_role_description: body.ideal_role_description ?? null,
     must_haves: body.must_haves ?? null,
     nice_to_haves: body.nice_to_haves ?? null,
+  };
+  const scoringChanged = SCORING_FIELDS.some(
+    (f) => normalize(scoringValues[f]) !== normalize(existing?.[f]),
+  );
+
+  const row = {
+    user_id: user.id,
+    ...scoringValues,
     home_address: newAddress,
     home_latitude: homeLat,
     home_longitude: homeLng,
-    updated_at: new Date().toISOString(),
+    digest_opt_in: body.digest_opt_in ?? false,
+    digest_min_score: body.digest_min_score ?? 7,
+    updated_at:
+      scoringChanged || !existing?.updated_at
+        ? new Date().toISOString()
+        : existing.updated_at,
   };
 
   const { data, error } = await supabase
@@ -90,5 +124,13 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  return NextResponse.json({ profile: data });
+  // Kick a re-score only when a field the scorer reads actually changed —
+  // an address or digest tweak shouldn't burn a scrape run.
+  const scoreRefreshTriggered = scoringChanged ? await triggerScoreRefresh() : false;
+
+  return NextResponse.json({
+    profile: data,
+    scoring_changed: scoringChanged,
+    score_refresh_triggered: scoreRefreshTriggered,
+  });
 }

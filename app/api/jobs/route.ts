@@ -19,6 +19,8 @@ export async function GET(request: NextRequest) {
   const subject = sp.get("subject");
   const minScore = Number(sp.get("minScore") ?? "1");
   const isNew = sp.get("isNew") === "true";
+  const bilingual = sp.get("bilingual") === "true";
+  const employment = sp.get("employment"); // 'full_time' | 'part_time' | null
   const dateRange = sp.get("dateRange"); // '7d' | '30d' | null
   const sortBy = sp.get("sortBy") ?? "relevance";
   const page = Math.max(1, Number(sp.get("page") ?? "1"));
@@ -50,6 +52,14 @@ export async function GET(request: NextRequest) {
       `title.ilike.%${subject}%,category.ilike.%${subject}%,description.ilike.%${subject}%`,
     );
   }
+  if (bilingual) {
+    // Bilingual / dual-language roles are tagged in the title by the scrapers'
+    // title filter, so a title match is reliable. Separate .or() groups AND.
+    query = query.or("title.ilike.%bilingual%,title.ilike.%dual language%");
+  }
+  if (employment === "full_time" || employment === "part_time") {
+    query = query.eq("employment_type", employment);
+  }
   if (minScore > 1) query = query.gte("relevance_score", minScore);
   if (isNew) {
     // "New" = first seen in the last 24h (first_seen_at is immutable; is_new/
@@ -68,6 +78,13 @@ export async function GET(request: NextRequest) {
   const applyOrder = (q: typeof query) => {
     if (sortBy === "date") {
       return q.order("posting_date", { ascending: false, nullsFirst: false });
+    }
+    if (sortBy === "closing") {
+      // Soonest deadline first; postings without one sink to the bottom,
+      // tie-broken by score.
+      return q
+        .order("closing_date", { ascending: true, nullsFirst: false })
+        .order("relevance_score", { ascending: false, nullsFirst: false });
     }
     return q
       .order("relevance_score", { ascending: false, nullsFirst: false })
